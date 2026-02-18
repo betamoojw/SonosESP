@@ -697,6 +697,7 @@ void albumArtTask(void* param) {
                                 Serial.printf("[ART] Incomplete %d times, giving up on this URL\n", consecutive_failures);
                                 if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(100))) {
                                     last_art_url = url;
+                                    art_show_placeholder = true;
                                     xSemaphoreGive(art_mutex);
                                 }
                                 consecutive_failures = 0;
@@ -850,6 +851,7 @@ void albumArtTask(void* param) {
                                 // Mark as done to prevent infinite retry loop
                                 if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(100))) {
                                     last_art_url = url;
+                                    art_show_placeholder = true;
                                     xSemaphoreGive(art_mutex);
                                 }
                             } else if (isJPEG && hw_jpeg_decoder) {
@@ -1046,6 +1048,7 @@ void albumArtTask(void* param) {
                                         Serial.printf("[ART] Decode failed %d times, skipping URL\n", consecutive_failures);
                                         if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(100))) {
                                             last_art_url = url;
+                                            art_show_placeholder = true;
                                             xSemaphoreGive(art_mutex);
                                         }
                                         consecutive_failures = 0;
@@ -1088,6 +1091,7 @@ void albumArtTask(void* param) {
                                     // SW also failed - mark as done
                                     if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(100))) {
                                         last_art_url = url;
+                                        art_show_placeholder = true;
                                         xSemaphoreGive(art_mutex);
                                     }
                                 }
@@ -1096,6 +1100,7 @@ void albumArtTask(void* param) {
                                 // Mark as done to prevent retry loop
                                 if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(100))) {
                                     last_art_url = url;
+                                    art_show_placeholder = true;
                                     xSemaphoreGive(art_mutex);
                                 }
                             }
@@ -1106,6 +1111,7 @@ void albumArtTask(void* param) {
                         // Mark as done - memory issue, retry won't help
                         if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(100))) {
                             last_art_url = url;
+                            art_show_placeholder = true;
                             xSemaphoreGive(art_mutex);
                         }
                     }
@@ -1117,6 +1123,7 @@ void albumArtTask(void* param) {
                     Serial.println("[ART] Connection closed (oversized image)");
                     if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(100))) {
                         last_art_url = url;
+                        art_show_placeholder = true;
                         xSemaphoreGive(art_mutex);
                     }
                     // CRITICAL: Free TLS/DMA resources before releasing mutex
@@ -1167,6 +1174,7 @@ void albumArtTask(void* param) {
                             Serial.printf("[ART] Failed %d times, giving up on this URL\n", consecutive_failures);
                             if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(100))) {
                                 last_art_url = url;  // Mark as done
+                                art_show_placeholder = true;
                                 xSemaphoreGive(art_mutex);
                             }
                             consecutive_failures = 0;  // Reset for next URL

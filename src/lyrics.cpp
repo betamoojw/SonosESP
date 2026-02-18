@@ -25,6 +25,8 @@ static char pending_artist[128];
 static char pending_title[128];
 static int pending_duration = 0;
 static int lyrics_retry_count = 0;  // Track retry attempts for failed fetches
+static char lyrics_status_msg[64] = "";         // Status shown briefly after fetch completes
+static unsigned long lyrics_status_until_ms = 0; // Show status until this timestamp
 
 // UI overlay objects
 static lv_obj_t* lyrics_container = nullptr;
@@ -256,11 +258,11 @@ static void lyricsTaskFunc(void* param) {
             Serial.printf("[LYRICS] HTTP %d (%s)\n", code, error_msg);
             Serial.flush();  // CRITICAL: Flush serial buffer to prevent output corruption
 
-            // Retry logic: 2 retries with short delays (total 3 attempts)
+            // Retry logic: 3 attempts total (initial + 2 retries)
             // Each HTTPS retry stresses SDIO and blocks art downloads via network_mutex
             lyrics_retry_count++;
-            if (lyrics_retry_count < 2) {
-                Serial.printf("[LYRICS] Retry %d/2 in 2s...\n", lyrics_retry_count);
+            if (lyrics_retry_count < 3) {
+                Serial.printf("[LYRICS] Retry %d/3 in 2s...\n", lyrics_retry_count);
             } else {
                 Serial.println("[LYRICS] Max retries reached, giving up");
                 lyrics_retry_count = 0;  // Reset for next track
@@ -293,7 +295,7 @@ static void lyricsTaskFunc(void* param) {
     }
 
     // If failed and retries remaining, spawn retry task after short delay
-    if (payload.length() == 0 && lyrics_retry_count > 0 && lyrics_retry_count < 2) {
+    if (payload.length() == 0 && lyrics_retry_count > 0 && lyrics_retry_count < 3) {
         // Fixed 2s delay (short to minimize art blocking)
         vTaskDelay(pdMS_TO_TICKS(2000));
 
@@ -326,15 +328,24 @@ static void lyricsTaskFunc(void* param) {
                     current_lyric_index = -1;
                     lyrics_ready = true;
                     Serial.printf("[LYRICS] Ready: %d lines\n", lyric_count);
-                    // Status will be updated by main UI loop
+                    strncpy(lyrics_status_msg, "Synced lyrics available", sizeof(lyrics_status_msg) - 1);
                 }
             } else {
                 Serial.println("[LYRICS] No synced lyrics available");
+                strncpy(lyrics_status_msg, "No synced lyrics", sizeof(lyrics_status_msg) - 1);
             }
         } else {
             Serial.printf("[LYRICS] JSON parse error: %s\n", err.c_str());
+            strncpy(lyrics_status_msg, "No lyrics", sizeof(lyrics_status_msg) - 1);
         }
+    } else {
+        // All retries exhausted with no response
+        strncpy(lyrics_status_msg, "No lyrics", sizeof(lyrics_status_msg) - 1);
     }
+
+    // Set status display window (5 seconds) before signalling UI thread
+    lyrics_status_msg[sizeof(lyrics_status_msg) - 1] = '\0';
+    lyrics_status_until_ms = millis() + 5000;
 
     lyrics_fetching = false;
     // Status will be updated by main UI loop
@@ -360,9 +371,11 @@ void requestLyrics(const String& artist, const String& title, int durationSec) {
     // Clear previous lyrics
     clearLyrics();
 
-    // Reset abort flag and retry counter for new fetch
+    // Reset abort flag, retry counter, and any pending status for new fetch
     lyrics_abort_requested = false;
     lyrics_retry_count = 0;
+    lyrics_status_msg[0] = '\0';
+    lyrics_status_until_ms = 0;
 
     // Store parameters for the task (copy to fixed buffers)
     strncpy(pending_artist, artist.c_str(), sizeof(pending_artist) - 1);
@@ -559,11 +572,14 @@ void updateLyricsStatus() {
         return;
     }
 
-    // Only show status when fetching, hide otherwise
     if (lyrics_fetching) {
         lv_label_set_text(lbl_lyrics_status, "Fetching lyrics...");
-        lv_obj_set_style_text_color(lbl_lyrics_status, lv_color_hex(0x666666), 0);  // Dark gray, subtle
+        lv_obj_set_style_text_color(lbl_lyrics_status, lv_color_hex(0x666666), 0);
+    } else if (lyrics_status_msg[0] != '\0' && millis() < lyrics_status_until_ms) {
+        // Show result status briefly after fetch completes (5 seconds)
+        lv_label_set_text(lbl_lyrics_status, lyrics_status_msg);
+        lv_obj_set_style_text_color(lbl_lyrics_status, lv_color_hex(0x666666), 0);
     } else {
-        lv_label_set_text(lbl_lyrics_status, "");  // Hide when ready or no lyrics
+        lv_label_set_text(lbl_lyrics_status, "");
     }
 }

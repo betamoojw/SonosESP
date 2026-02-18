@@ -1459,6 +1459,12 @@ void updateUI() {
             lv_obj_remove_flag(img_album, LV_OBJ_FLAG_HIDDEN);  // Show album art
             lv_obj_add_flag(art_placeholder, LV_OBJ_FLAG_HIDDEN);  // Hide placeholder
             art_ready = false;
+            art_show_placeholder = false;  // Clear in case it was set before art loaded
+        } else if (art_show_placeholder) {
+            // Art permanently failed - hide old art, show placeholder
+            lv_obj_add_flag(img_album, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(art_placeholder, LV_OBJ_FLAG_HIDDEN);
+            art_show_placeholder = false;
         }
         if (color_ready && panel_art && panel_right) {
             setBackgroundColor(dominant_color);

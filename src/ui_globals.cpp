@@ -112,6 +112,7 @@ uint16_t* art_temp_buffer = nullptr;
 String last_art_url = "";
 String pending_art_url = "";
 volatile bool art_ready = false;
+volatile bool art_show_placeholder = false;  // Signal UI to show placeholder (art permanently failed)
 SemaphoreHandle_t art_mutex = nullptr;
 TaskHandle_t albumArtTaskHandle = nullptr;
 TaskHandle_t lyricsTaskHandle = nullptr;

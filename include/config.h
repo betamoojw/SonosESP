@@ -80,7 +80,14 @@
 // =============================================================================
 #define SONOS_MAX_DEVICES       32      // Maximum discoverable devices (keep in sync with MAX_SONOS_DEVICES)
 #define SONOS_QUEUE_SIZE_MAX    500     // Maximum queue items to fetch
-#define SONOS_QUEUE_BATCH_SIZE  50      // Items per queue fetch request
+#define SONOS_QUEUE_BATCH_SIZE  10      // Items per queue fetch request (was 50).
+                                        // 50-item response (~20KB, 14 TCP segs) forced WiFi driver to allocate
+                                        // all 32 dynamic RX buffers (~51KB) in one event → permanent 71KB DMA
+                                        // floor drop after first periodic queue poll → Song 2 crash-zone.
+                                        // 10-item response (~4KB, 3 TCP segs) allocates only 3 WiFi buffers.
+                                        // Art download (16KB burst) adds ~11 more buffers. Pool stabilises at
+                                        // ~14 total (22KB) instead of 32 (51KB). DMA floor = ~85KB vs ~35KB.
+                                        // 10 items is sufficient for the "Next Up" queue display.
 #define SONOS_CMD_QUEUE_SIZE    10      // Command queue depth
 #define SONOS_UI_QUEUE_SIZE     20      // UI update queue depth
 
@@ -225,6 +232,59 @@
 // QUEUE / PLAYLIST
 // =============================================================================
 #define QUEUE_ADD_AT_END        4294967295  // Add to end of queue constant
+
+// =============================================================================
+// SDIO CRASH DEFENCE (ESP32-P4 + ESP32-C6 SDIO architecture)
+// =============================================================================
+// The C6 WiFi chip connects to the P4 host via SDIO. C6 has a fixed-size
+// pkt_rxbuff. Concurrent TCP traffic (HTTP response residue + SOAP responses
+// + UPnP NOTIFY events) overflows it → C6 asserts sdio_push_data_to_queue:928
+// → SDIO host spins in tight register-poll loop → Interrupt WDT on CPU0.
+// All values below are calibrated for this hardware. Do NOT reduce without testing.
+#define SDIO_GENERAL_COOLDOWN_MS      200   // Min gap between any two network operations
+#define SDIO_HTTPS_COOLDOWN_MS       3000   // TLS teardown residue — 2000ms insufficient (DMA AES alloc failure)
+#define SDIO_STORM_COOLDOWN_MS       3000   // HTTP-500 storm settle (HLS source transition)
+#define SDIO_STORM_SAFETY_CAP_MS     5000   // Max wait inside 500-storm loop (safety cap)
+#define SDIO_TRACK_CHANGE_SETTLE_MS     0   // Disabled: Sonos lib is pure SOAP-polling (no UPnP subscriptions,
+                                            // no WiFiServer, no NOTIFY events). Long idle → C6 power-save → crash.
+#define SDIO_POST_STORM_SETTLE_MS       0   // Disabled: storm gate (3000ms) + any settle = too much idle → C6 SDIO
+                                            // DMA clock-gates → pkt_rxbuff fills on wake burst. Even 1000ms settle
+                                            // (total 4000ms idle) crashes. Keepalive: see SDIO_STORM_KEEPALIVE_MS.
+#define SDIO_TCP_CLOSE_MS             200   // TCP FIN-ACK drain after http.end() (non-TLS)
+#define SDIO_HTTPS_TCP_CLOSE_MS       500   // TCP FIN-ACK drain after http.end() (TLS)
+#define SDIO_INTER_DOWNLOAD_MS       1000   // Min gap between consecutive art/BG downloads
+#define ART_TCP_RCVBUF               4096   // TCP SO_RCVBUF for art HTTP socket. Controls app-layer recv
+                                            // buffer size (conn->recv_bufsize). Does NOT directly control
+                                            // TCP window advertisement (pcb->rcv_wnd). The TCP window
+                                            // (65534) is baked into the pre-compiled liblwip.a and cannot
+                                            // be changed at runtime. SO_RCVBUF gradually constrains the
+                                            // advertised window as the app buffer fills, preventing runaway
+                                            // server bursts during multi-segment downloads.
+#define ART_TCP_RCVBUF_DL_SAFETY    16000   // Abort if DMA < this AT dl-start (AFTER http.GET() burst absorbed).
+                                            // CONFIRMED CRASH: dl-start=22364 → WiFi alloc ~15KB during read → :928.
+                                            // Belt-and-suspenders: ART_DMA_MID_READ_MIN catches further drops during
+                                            // the read loop itself. 16KB catches catastrophically-low dl-start values
+                                            // (burst >> expected) without blocking healthy Song 2+ downloads.
+                                            // Song 2+ DMA floor 38-42KB: burst 16KB → dl-start 22-26KB >> 16KB ✓
+                                            // Crash scenario: dl-start 22KB > 16KB passes → mid-read check at 8KB
+                                            // catches the WiFi-alloc drop → aborts before :928.
+#define ART_MIN_FREE_DMA             8000   // Min DMA before art pre-connect (DMA wait loop gate — vestigial).
+#define ART_MIN_DMA_PRE_BURST       20000   // Min DMA before http.GET() (BEFORE burst arrives).
+                                            // Immediate burst drain (pre-alloc jpgBuf + drain loop right after GET)
+                                            // frees TCP pbufs before :928 crash window closes, so we no longer need
+                                            // 34KB headroom. Steady-state DMA floor = 28-32KB > 20KB → always passes.
+                                            // Crash floor = ~6-7KB; 20KB = crash_floor + ~13KB safety margin.
+                                            // Was 34KB: above 28-32KB floor → all art downloads aborted (art never loaded).
+#define ART_DMA_MID_READ_MIN         8000   // Abort if DMA < this DURING the chunk read loop. Belt-and-suspenders:
+                                            // if WiFi dynamic RX buffers allocate ~15KB after dl-start passes, this
+                                            // catches the resulting DMA drop before it hits the crash floor (~6-7KB).
+                                            // Confirmed crash floor: 6744 bytes. 8KB = 6744 + ~1.3KB safety margin.
+#define SDIO_QUEUE_POLL_COOLDOWN_MS  3000   // After updateQueue() 20KB Browse response residue (was 2000, too short)
+#define SDIO_POST_QUEUE_DRAIN_MS     1000   // Polling task: drain Browse response before next cycle
+
+// Lyrics-specific
+#define LYRICS_ART_WAIT_TIMEOUT_MS  15000   // Max wait for art_download_in_progress to clear (storm cooldown 3000ms + download ~2000ms + margin)
+#define LYRICS_RETRY_DELAY_MS        2000   // Between lyrics HTTPS fetch retry attempts
 
 // =============================================================================
 // WATCHDOG & RELIABILITY

@@ -10,7 +10,6 @@
 #include "clock_screen.h"
 #include <esp_flash.h>
 #include <esp_task_wdt.h>
-
 // Sonos logo
 LV_IMG_DECLARE(Sonos_idnu60bqes_1);
 
@@ -124,6 +123,48 @@ void setup() {
         Serial.printf("[NTP] Sync started, TZ=%s\n", CLOCK_ZONES[clock_tz_idx].name);
     } else {
         Serial.println("\n[WIFI] Connection failed - will retry from settings");
+    }
+
+    // === Memory map logged once at boot (post-WiFi, pre-LVGL) ===
+    // Used to diagnose DMA depletion: compare to runtime [ART/*/MEM] logs.
+    // DMA SRAM is the crash-critical pool — WiFi/TCP/JPEG all draw from it.
+    {
+        size_t dma_free    = heap_caps_get_free_size(MALLOC_CAP_DMA);
+        size_t dma_total   = heap_caps_get_total_size(MALLOC_CAP_DMA);
+        size_t psram_free  = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        size_t psram_total = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+        size_t int_free    = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        size_t int_total   = heap_caps_get_total_size(MALLOC_CAP_INTERNAL);
+        size_t wifi_used   = dma_total > dma_free ? dma_total - dma_free : 0;
+        Serial.println("\n=== MEMORY MAP (post-WiFi, pre-LVGL) ===");
+        Serial.printf("  DMA SRAM:   %4uKB free / %4uKB total  (WiFi permanent: %uKB)\n",
+                      dma_free/1024, dma_total/1024, wifi_used/1024);
+        Serial.printf("  PSRAM:      %4uKB free / %4uKB total\n",
+                      psram_free/1024, psram_total/1024);
+        Serial.printf("  IRAM/DRAM:  %4uKB free / %4uKB total\n",
+                      int_free/1024, int_total/1024);
+        Serial.println("  --- DMA SRAM consumer estimates ---");
+        Serial.printf("  WiFi/SDIO permanent:     ~%uKB (pkt_rxbuff, DMA descs, HMAC, LMAC)\n",
+                      wifi_used/1024);
+        Serial.printf("  lwIP TIME_WAIT PCBs:     0-??KB (variable; use [SOAP/DMA] logs)\n");
+        Serial.printf("  Art TCP SO_RCVBUF=8KB:   ~9KB  (during art HTTP download only)\n");
+        Serial.printf("  JPEG HW decode output:   ~??KB (log [ART/pre-decode vs post-decode] MEM)\n");
+        Serial.printf("  mbedTLS HTTPS session:   ~5KB  (during lyrics/clock HTTPS only)\n");
+        Serial.printf("  Safe idle floor:         ~%uKB (ART_MIN_FREE_DMA threshold)\n",
+                      ART_MIN_FREE_DMA/1024);
+        Serial.println("  --- PSRAM consumer estimates ---");
+        Serial.printf("  LVGL frame bufs: ~%uKB (2 x %ux%ux2)\n",
+                      2*DISPLAY_WIDTH*DISPLAY_HEIGHT*2/1024, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+        Serial.printf("  Art LRU cache:   ~230KB (2 slots x 240x240x2)\n");
+        Serial.printf("  Art task stack:    %uKB\n", ART_TASK_STACK_SIZE/1024);
+        Serial.printf("  Art download buf:  %uKB max (alloc+free per download)\n",
+                      ART_MAX_DOWNLOAD_SIZE/1024);
+        Serial.println("  --- Internal SRAM task stacks ---");
+        Serial.printf("  mainAppTask: %uKB  SonosPoll: %uKB  SonosNet: %uKB\n",
+                      MAIN_APP_TASK_STACK/1024, SONOS_POLL_TASK_STACK/1024, SONOS_NET_TASK_STACK/1024);
+        Serial.printf("  Lyrics: %uKB  ClockBG: %uKB\n",
+                      LYRICS_TASK_STACK/1024, CLOCK_BG_TASK_STACK/1024);
+        Serial.println("=========================================\n");
     }
 
     lv_init();

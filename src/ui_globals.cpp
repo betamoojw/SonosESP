@@ -104,7 +104,7 @@ lv_obj_t *btn_groups_scan = nullptr;
 lv_obj_t *spinner_groups_scan = nullptr;
 
 // ============================================================================
-// Album Art
+// Album Art — Rendering State
 // ============================================================================
 lv_img_dsc_t art_dsc;
 uint16_t* art_buffer = nullptr;
@@ -114,26 +114,39 @@ String pending_art_url = "";
 volatile bool art_ready = false;
 volatile bool art_show_placeholder = false;  // Signal UI to show placeholder (art permanently failed)
 SemaphoreHandle_t art_mutex = nullptr;
-TaskHandle_t albumArtTaskHandle = nullptr;
-StaticTask_t albumArtTaskTCB;               // TCB in internal SRAM (tiny, ~88 bytes)
-StackType_t* art_task_stack = nullptr;      // Stack in PSRAM — allocated once in createArtTask()
-TaskHandle_t lyricsTaskHandle = nullptr;
-StaticTask_t lyricsTaskTCB;                 // TCB in internal SRAM
-StackType_t* lyrics_task_stack = nullptr;   // Stack in PSRAM — allocated once in initLyrics()
-volatile bool lyrics_shutdown_requested = false;  // Signal lyrics task to stop for OTA
-volatile bool art_shutdown_requested = false;  // Signal album art to stop gracefully
-volatile bool art_abort_download = false;      // Signal to abort current download (source changed)
-volatile bool sonos_tasks_shutdown_requested = false;  // Signal Sonos tasks to stop for OTA
 uint32_t dominant_color = 0x1a1a1a;
 volatile bool color_ready = false;
 int art_offset_x = 0;
 int art_offset_y = 0;
 bool is_sonos_radio_art = false;
 bool pending_is_station_logo = false;
-volatile unsigned long last_queue_fetch_time = 0;  // Last updateQueue() completion time (large HTTP — art waits 2000ms)
-SemaphoreHandle_t network_mutex = NULL;  // Created in main.cpp
-volatile unsigned long last_network_end_ms = 0;  // Last network operation end time (for SDIO cooldown)
-volatile unsigned long last_https_end_ms = 0;   // Last HTTPS operation end time (TLS needs longer cooldown)
+
+// ============================================================================
+// Network Tasks — FreeRTOS Handles and Shutdown Signals
+// ============================================================================
+TaskHandle_t albumArtTaskHandle = nullptr;
+StaticTask_t albumArtTaskTCB;               // TCB in internal SRAM (tiny, ~88 bytes)
+StackType_t* art_task_stack = nullptr;      // Stack in PSRAM — allocated once in createArtTask()
+volatile bool art_shutdown_requested = false;  // Signal album art task to stop gracefully
+volatile bool art_abort_download = false;      // Signal to abort current download (source changed)
+TaskHandle_t lyricsTaskHandle = nullptr;
+StaticTask_t lyricsTaskTCB;                 // TCB in internal SRAM
+StackType_t* lyrics_task_stack = nullptr;   // Stack in PSRAM — allocated once in initLyrics()
+volatile bool lyrics_shutdown_requested = false;  // Signal lyrics task to stop for OTA
+volatile bool sonos_tasks_shutdown_requested = false;  // Signal Sonos tasks to stop for OTA
+
+// ============================================================================
+// SDIO Crash Defence — Network Timing Globals
+// (See MEMORY.md and ui_network_guard.h for full crash-defence architecture)
+// ============================================================================
+SemaphoreHandle_t network_mutex = NULL;  // Created in main.cpp; serialises all WiFi/HTTPS ops
+volatile unsigned long last_network_end_ms  = 0;  // Last network op end (200ms general cooldown)
+volatile unsigned long last_https_end_ms    = 0;  // Last HTTPS session end (3000ms TLS residue)
+volatile unsigned long last_queue_fetch_time = 0; // Last updateQueue() end (3000ms Browse residue)
+volatile bool          art_download_in_progress = false; // True during download — suppresses SOAP polling
+volatile unsigned long last_art_download_end_ms = 0; // Set after large HTTP downloads; gates lyrics/queue/inter-download cooldowns
+volatile unsigned long last_track_change_ms  = 0; // Set by requestAlbumArt(); 2000ms NOTIFY settle
+volatile unsigned long last_transient_500_ms = 0; // Set by sendSOAP() on 500; 3000ms HLS storm gate
 
 // ============================================================================
 // UI State

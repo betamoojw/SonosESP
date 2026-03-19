@@ -282,6 +282,8 @@ extern uint32_t   last_clock_exit_ms;        // Last time clock was dismissed
 // Clock Background Task
 // ============================================================================
 extern TaskHandle_t clockBgTaskHandle;
+extern StaticTask_t clkbgTaskTCB;
+extern StackType_t* clkbg_task_stack;
 extern volatile bool clock_bg_shutdown_requested;
 extern volatile bool clock_bg_ready;     // New image decoded and ready to display
 extern uint16_t*     clock_bg_buffer;    // PSRAM pixel buffer (800×480 RGB565)

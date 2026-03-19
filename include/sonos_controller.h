@@ -26,6 +26,7 @@ typedef enum {
     CMD_SET_REPEAT,
     CMD_SEEK,
     CMD_PLAY_QUEUE_ITEM,
+    CMD_UPDATE_QUEUE,   // Refresh queue from network (safe: runs in network task, not UI thread)
     CMD_UPDATE_STATE,
     CMD_JOIN_GROUP,
     CMD_LEAVE_GROUP
@@ -173,10 +174,11 @@ public:
     void setShuffle(bool enable);
     void setRepeat(const char* mode);  // "NONE", "ONE", "ALL"
     void playQueueItem(int index);     // Play specific track from queue (1-based)
+    void requestQueueUpdate();         // Async queue refresh (runs in network task, safe from UI thread)
     bool saveCurrentTrack(const char* playlistName = "Favorites");  // Save current track to playlist
     String browseContent(const char* objectID, int startIndex = 0, int count = 100);  // Browse ContentDirectory
     bool playURI(const char* uri, const char* metadata = "");  // Play URI with optional metadata
-    bool playPlaylist(const char* playlistID);  // Play a Sonos playlist by ID (e.g., "SQ:25")
+    bool playPlaylist(const char* playlistID, const char* title = "Playlist");  // Play a Sonos playlist by ID (e.g., "SQ:25")
     bool playContainer(const char* containerURI, const char* metadata = "");  // Play a container URI with DIDL metadata
     String listMusicServices();  // List available music services
     String getCurrentTrackInfo();  // Get current track URI and metadata for analysis

@@ -215,6 +215,8 @@ uint32_t   clock_exiting_start_ms  = 0;
 uint32_t   last_clock_exit_ms      = 0;
 
 TaskHandle_t         clockBgTaskHandle          = nullptr;
+StaticTask_t         clkbgTaskTCB;                         // TCB in internal SRAM (tiny, ~88 bytes)
+StackType_t*         clkbg_task_stack           = nullptr; // Stack in PSRAM — allocated once, reused across sessions
 volatile bool        clock_bg_shutdown_requested = false;
 volatile bool        clock_bg_ready             = false;
 uint16_t*            clock_bg_buffer            = nullptr;

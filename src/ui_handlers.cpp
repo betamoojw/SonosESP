@@ -107,6 +107,10 @@ void ev_mute(lv_event_t* e) {
 }
 
 void ev_queue_item(lv_event_t* e) {
+    static uint32_t last_click_ms = 0;
+    uint32_t now = millis();
+    if (now - last_click_ms < 1500) return;  // debounce: ignore rapid repeat taps
+    last_click_ms = now;
     int trackNum = (int)(intptr_t)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
     sonos.playQueueItem(trackNum);
     lv_screen_load(scr_main);

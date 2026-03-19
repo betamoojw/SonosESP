@@ -903,10 +903,25 @@ void checkClockTrigger() {
                 clock_bg_shutdown_requested = false;
                 clock_bg_ready              = false;
                 if (clock_picsum_enabled) memset(&clock_bg_dsc, 0, sizeof(clock_bg_dsc));
-                xTaskCreatePinnedToCore(
-                    clockBgTask, "ClkBg",
-                    CLOCK_BG_TASK_STACK, NULL, 1,
-                    &clockBgTaskHandle, 0);
+                // Allocate stack in PSRAM to free 8KB of DMA SRAM for SDIO RX buffers.
+                // Same pattern as art task (20KB) and lyrics task (8KB).
+                // Safe: clockBgTask never calls NVS/flash write functions.
+                if (!clkbg_task_stack) {
+                    clkbg_task_stack = (StackType_t*)heap_caps_malloc(
+                        CLOCK_BG_TASK_STACK, MALLOC_CAP_SPIRAM);
+                }
+                if (clkbg_task_stack) {
+                    clockBgTaskHandle = xTaskCreateStaticPinnedToCore(
+                        clockBgTask, "ClkBg",
+                        CLOCK_BG_TASK_STACK / sizeof(StackType_t),
+                        NULL, 1, clkbg_task_stack, &clkbgTaskTCB, 0);
+                } else {
+                    // PSRAM alloc failed — fall back to internal SRAM
+                    xTaskCreatePinnedToCore(
+                        clockBgTask, "ClkBg",
+                        CLOCK_BG_TASK_STACK, NULL, 1,
+                        &clockBgTaskHandle, 0);
+                }
             }
 
             // Start 1-second clock tick

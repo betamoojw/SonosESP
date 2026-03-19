@@ -233,6 +233,9 @@ extern StaticTask_t albumArtTaskTCB;
 extern StackType_t* art_task_stack;
 extern volatile bool art_shutdown_requested;
 extern volatile bool art_abort_download;
+extern volatile bool art_suppress_source_change;  // Suppress intermediate art triggers during queue-select Seek→Play
+extern volatile bool cmd_queue_in_progress;        // CMD_PLAY_QUEUE_ITEM active — suppress all polling from drain through settle
+extern unsigned long last_cmd_queue_play_ms;       // Timestamp when CMD_PLAY_QUEUE_ITEM last cleared flags
 void albumArtTask(void *param);
 void createArtTask();   // PSRAM-stack wrapper — use instead of xTaskCreatePinnedToCore directly
 

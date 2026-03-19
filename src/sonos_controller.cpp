@@ -538,6 +538,14 @@ void SonosController::playQueueItem(int index) {
     xQueueSend(commandQueue, &cmd, 0);
 }
 
+void SonosController::requestQueueUpdate() {
+    // Enqueue an async queue refresh — runs in network task with proper SDIO cooldowns.
+    // Safe to call from UI thread (mainAppTask); updateQueue() must NOT be called directly
+    // from the UI thread as it fires a 20KB SOAP response without mutex/cooldown protection.
+    CommandRequest_t cmd = { CMD_UPDATE_QUEUE, 0 };
+    xQueueSend(commandQueue, &cmd, 0);
+}
+
 bool SonosController::saveCurrentTrack(const char* playlistName) {
     SonosDevice* dev = getCurrentDevice();
     if (!dev || !dev->connected) {
@@ -748,35 +756,70 @@ bool SonosController::playURI(const char* uri, const char* metadata) {
     return false;
 }
 
-bool SonosController::playPlaylist(const char* playlistID) {
+bool SonosController::playPlaylist(const char* playlistID, const char* title) {
     SonosDevice* dev = getCurrentDevice();
     if (!dev || !dev->connected) {
         Serial.println("[PLAYLIST] Device not available");
         return false;
     }
 
-    Serial.printf("[PLAYLIST] Loading playlist: %s\n", playlistID);
+    Serial.printf("[PLAYLIST] Loading playlist: %s (%s)\n", playlistID, title);
 
     sendSOAP("AVTransport", "RemoveAllTracksFromQueue", "<InstanceID>0</InstanceID>");
-    vTaskDelay(pdMS_TO_TICKS(100));
+    // 500ms: Sonos enters a brief transient state after RemoveAllTracksFromQueue
+    // and returns HTTP 500 for subsequent AddURIToQueue if we fire too quickly.
+    vTaskDelay(pdMS_TO_TICKS(500));
 
     String playlistNum = String(playlistID);
     playlistNum.replace("SQ:", "");
 
-    // Use static buffers to avoid String concatenation
     static char playlistURI[128];
-    static char addArgs[512];
-    snprintf(playlistURI, sizeof(playlistURI), "file:///jffs/settings/savedqueues.rsq#%s", playlistNum.c_str());
+    snprintf(playlistURI, sizeof(playlistURI),
+             "file:///jffs/settings/savedqueues.rsq#%s", playlistNum.c_str());
+
+    // Sonos requires DIDL-Lite metadata in EnqueuedURIMetaData for playlist URIs.
+    // Without it, AddURIToQueue returns a SOAP Fault and the playlist never loads.
+    static char rawMeta[512];
+    snprintf(rawMeta, sizeof(rawMeta),
+        "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\""
+        " xmlns:dc=\"http://purl.org/dc/elements/1.1/\""
+        " xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\""
+        " xmlns:r=\"urn:schemas-rinconnetworks-com:metadata-1-0/\">"
+        "<container id=\"%s\" parentID=\"SQ:\" restricted=\"false\">"
+        "<dc:title>%s</dc:title>"
+        "<upnp:class>object.container.playlistContainer</upnp:class>"
+        "<res protocolInfo=\"x-rincon-playlist:*:*:*\">%s</res>"
+        "</container>"
+        "</DIDL-Lite>",
+        playlistID, title, playlistURI);
+
+    // encodeXML converts < > " & to &lt; &gt; &quot; &amp; so the DIDL
+    // can be safely embedded as a SOAP field value.
+    String metaEncoded = String(rawMeta);
+    encodeXML(metaEncoded);
+
+    static char addArgs[1024];
     snprintf(addArgs, sizeof(addArgs),
         "<InstanceID>0</InstanceID>"
         "<EnqueuedURI>%s</EnqueuedURI>"
-        "<EnqueuedURIMetaData></EnqueuedURIMetaData>"
-        "<DesiredFirstTrackNumberEnqueued>0</DesiredFirstTrackNumberEnqueued>"
-        "<EnqueueAsNext>1</EnqueueAsNext>",
-        playlistURI);
+        "<EnqueuedURIMetaData>%s</EnqueuedURIMetaData>"
+        "<DesiredFirstTrackNumberEnqueued>1</DesiredFirstTrackNumberEnqueued>"
+        "<EnqueueAsNext>0</EnqueueAsNext>",
+        playlistURI, metaEncoded.c_str());
 
     Serial.printf("[PLAYLIST] Adding to queue: %s\n", playlistURI);
-    String resp = sendSOAP("AVTransport", "AddURIToQueue", addArgs);
+
+    // 3-retry loop: Sonos may return HTTP 500 (transient) briefly after
+    // RemoveAllTracksFromQueue even with the 500ms delay on slow devices.
+    String resp;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        resp = sendSOAP("AVTransport", "AddURIToQueue", addArgs);
+        if (resp.length() > 0 && resp.indexOf("Fault") < 0) {
+            break;
+        }
+        Serial.printf("[PLAYLIST] AddURIToQueue attempt %d failed, retrying\n", attempt + 1);
+        vTaskDelay(pdMS_TO_TICKS(400));
+    }
 
     if (resp.length() > 0 && resp.indexOf("Fault") < 0) {
         vTaskDelay(pdMS_TO_TICKS(200));
@@ -793,7 +836,6 @@ bool SonosController::playPlaylist(const char* playlistID) {
         Serial.println("[PLAYLIST] Playlist loaded and playing");
         sendSOAP("AVTransport", "SetAVTransportURI", setArgs);
         vTaskDelay(pdMS_TO_TICKS(100));
-
         sendSOAP("AVTransport", "Play", "<InstanceID>0</InstanceID><Speed>1</Speed>");
         vTaskDelay(pdMS_TO_TICKS(300));
         updateTrackInfo();
@@ -1425,6 +1467,13 @@ void SonosController::processCommand(CommandRequest_t* cmd) {
             }
             vTaskDelay(pdMS_TO_TICKS(200));
             updateTrackInfo();
+            break;
+        }
+
+        case CMD_UPDATE_QUEUE: {
+            // Triggered by the queue screen refresh button — runs here in the network task,
+            // NOT on the UI/mainAppTask thread, so SDIO cooldowns and mutex are handled properly.
+            updateQueue();
             break;
         }
 

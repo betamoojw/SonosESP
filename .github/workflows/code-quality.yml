@@ -1,0 +1,251 @@
+name: Code Quality
+
+on:
+  push:
+    branches: [ main, develop, 'feature/**', 'fix/**' ]
+    paths: [ 'src/**', 'include/**' ]
+  pull_request:
+    branches: [ main ]
+    paths: [ 'src/**', 'include/**' ]
+
+permissions:
+  contents: read
+  security-events: write   # required for SARIF upload to Code Scanning tab
+  pull-requests: write      # required to post PR comments
+
+jobs:
+  # ============================================================
+  # Job 1: cppcheck — static bug analysis
+  # Results appear as inline annotations on PR diffs via SARIF.
+  # ============================================================
+  cppcheck:
+    name: Static Analysis (cppcheck)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cppcheck
+        run: sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck
+        # || true: don't fail here — let the SARIF upload + summary step control pass/fail
+        run: |
+          cppcheck \
+            --enable=warning,performance,portability \
+            --suppress=missingIncludeSystem \
+            --suppress=missingInclude \
+            --suppress=unknownMacro \
+            --suppress=unmatchedSuppression \
+            --suppress=useInitializationList \
+            --suppress=noExplicitConstructor \
+            --suppress=cstyleCast \
+            --inline-suppr \
+            --xml --xml-version=2 \
+            -D ESP32 \
+            -D ARDUINO \
+            -D CONFIG_SPIRAM \
+            -I include \
+            src/ include/ \
+            2> cppcheck.xml || true
+
+      - name: Convert XML → SARIF
+        # SARIF lets GitHub show results as inline PR diff annotations
+        # and tracks them in Security → Code Scanning across branches.
+        if: always()
+        run: |
+          python3 << 'PYEOF'
+          import xml.etree.ElementTree as ET
+          import json, os, sys
+
+          try:
+              tree = ET.parse('cppcheck.xml')
+              root = tree.getroot()
+          except Exception as e:
+              print(f'Could not parse cppcheck.xml: {e}')
+              sarif = {'version':'2.1.0','$schema':'https://json.schemastore.org/sarif-2.1.0.json','runs':[{'tool':{'driver':{'name':'cppcheck','rules':[]}},'results':[]}]}
+              with open('cppcheck.sarif','w') as f: json.dump(sarif, f)
+              sys.exit(0)
+
+          severity_map = {
+              'error':       'error',
+              'warning':     'warning',
+              'performance': 'note',
+              'portability': 'note',
+              'style':       'note',
+              'information': 'none',
+          }
+
+          results, rules = [], {}
+
+          for error in root.findall('.//error'):
+              rule_id  = error.get('id', 'unknown')
+              severity = error.get('severity', 'information')
+              msg      = error.get('msg', '')
+              verbose  = error.get('verbose', msg)
+              cwe      = error.get('cwe', '')
+              level    = severity_map.get(severity, 'note')
+              if level == 'none':
+                  continue
+
+              if rule_id not in rules:
+                  rule = {
+                      'id': rule_id,
+                      'name': rule_id,
+                      'shortDescription': {'text': msg},
+                      'fullDescription':  {'text': verbose},
+                      'properties': {},
+                  }
+                  if cwe:
+                      rule['properties']['tags'] = [f'external/cwe/cwe-{cwe}']
+                  rules[rule_id] = rule
+
+              for loc_xml in (error.findall('location') or []):
+                  file_path = loc_xml.get('file', '').replace('\\', '/')
+                  if os.path.isabs(file_path):
+                      try: file_path = os.path.relpath(file_path).replace('\\', '/')
+                      except: pass
+                  try: line = max(1, int(loc_xml.get('line', 1)))
+                  except: line = 1
+
+                  results.append({
+                      'ruleId': rule_id,
+                      'level':  level,
+                      'message': {'text': msg},
+                      'locations': [{
+                          'physicalLocation': {
+                              'artifactLocation': {'uri': file_path, 'uriBaseId': '%SRCROOT%'},
+                              'region': {'startLine': line},
+                          }
+                      }],
+                  })
+                  break  # one annotation per error is enough
+
+          sarif = {
+              'version': '2.1.0',
+              '$schema': 'https://json.schemastore.org/sarif-2.1.0.json',
+              'runs': [{
+                  'tool': {
+                      'driver': {
+                          'name': 'cppcheck',
+                          'informationUri': 'https://cppcheck.sourceforge.io',
+                          'rules': list(rules.values()),
+                      }
+                  },
+                  'results': results,
+              }],
+          }
+
+          with open('cppcheck.sarif', 'w') as f:
+              json.dump(sarif, f, indent=2)
+
+          print(f'SARIF written: {len(results)} result(s)')
+          PYEOF
+
+      - name: Upload SARIF → GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: cppcheck.sarif
+          category: cppcheck
+
+      - name: Job summary + fail on errors
+        if: always()
+        run: |
+          echo "## 🔍 cppcheck Static Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ ! -s cppcheck.xml ]; then
+            echo "✅ No issues found." >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          ERRORS=$(grep -c 'severity="error"'       cppcheck.xml 2>/dev/null || echo 0)
+          WARNINGS=$(grep -c 'severity="warning"'   cppcheck.xml 2>/dev/null || echo 0)
+          PERF=$(grep -c 'severity="performance"'   cppcheck.xml 2>/dev/null || echo 0)
+          PORT=$(grep -c 'severity="portability"'   cppcheck.xml 2>/dev/null || echo 0)
+
+          echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|------:|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔴 error | $ERRORS |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🟡 warning | $WARNINGS |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔵 performance | $PERF |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⚪ portability | $PORT |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> Inline annotations visible in the **Security → Code scanning** tab and on PR diffs." >> $GITHUB_STEP_SUMMARY
+
+          if [ "$ERRORS" -gt "0" ] 2>/dev/null; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "❌ **Build failed: $ERRORS error(s) detected.**" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+  # ============================================================
+  # Job 2: lizard — cyclomatic complexity
+  # Flags functions that are too complex to safely modify.
+  # sonos_controller.cpp / ui_album_art.cpp have deep nesting
+  # and long functions that are prime candidates for subtle bugs.
+  # ============================================================
+  complexity:
+    name: Complexity Analysis (lizard)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install lizard
+        run: pip install lizard
+
+      - name: Run lizard
+        run: |
+          # CCN threshold 15: functions above this are too complex to safely change.
+          # Length threshold 100: functions over 100 lines are hard to reason about.
+          # --warnings-only: only print functions that exceed thresholds.
+          lizard src/ include/ \
+            --CCN 15 \
+            --length 100 \
+            --warnings-only \
+            -l cpp \
+            > lizard-warnings.txt 2>&1 || true
+
+          # Also generate full report for the summary
+          lizard src/ include/ \
+            -l cpp \
+            --sort cyclomatic_complexity \
+            > lizard-full.txt 2>&1 || true
+
+      - name: Job summary
+        if: always()
+        run: |
+          echo "## 🧠 Complexity Analysis (lizard)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Thresholds: **CCN > 15** or **function length > 100 lines**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -s lizard-warnings.txt ]; then
+            WARN_COUNT=$(wc -l < lizard-warnings.txt)
+            echo "### ⚠️ $WARN_COUNT function(s) exceed thresholds" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat lizard-warnings.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✅ All functions within complexity thresholds." >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Top 10 most complex functions" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          head -30 lizard-full.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail on high complexity
+        # Warn but don't block: complexity is technical debt, not a crash risk.
+        # Change exit 0 → exit 1 here when you want to enforce the threshold.
+        if: always()
+        run: |
+          if [ -s lizard-warnings.txt ]; then
+            echo "⚠️ Complex functions detected (see summary). Not blocking build."
+            exit 0
+          fi

@@ -273,6 +273,33 @@ void setup() {
     //
     // PSRAM is irrelevant: flash writes and TLS buffers use DMA SRAM only.
     // wifiPrefs is already open (read-write) from setup() — no new handle needed.
+    //
+    // If OTA is pending but the initial WiFi connect timed out, wait up to 30 extra seconds.
+    // Some routers/channels take 30–40s to assign an IP — the 20s initial window can be too short.
+    // We must NOT call triggerPendingOTA() without WiFi — it would silently fail and clear the URL.
+    if (wifiPrefs.getBool(NVS_KEY_OTA_PENDING, false) && WiFi.status() != WL_CONNECTED) {
+        Serial.println("[OTA] Boot OTA pending — waiting for WiFi...");
+        lv_obj_t* lbl_ota_wifi = lv_label_create(boot_scr);
+        lv_label_set_text(lbl_ota_wifi, "Waiting for WiFi (OTA pending)...");
+        lv_obj_set_style_text_color(lbl_ota_wifi, lv_color_hex(0xD4A84B), 0);
+        lv_obj_set_style_text_font(lbl_ota_wifi, &lv_font_montserrat_16, 0);
+        lv_obj_align(lbl_ota_wifi, LV_ALIGN_CENTER, 0, 50);
+        lv_refr_now(NULL);
+        int ota_wifi_tries = 0;
+        while (WiFi.status() != WL_CONNECTED && ota_wifi_tries++ < 60) {  // up to 30s extra
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.printf("[OTA] WiFi connected — IP: %s\n", WiFi.localIP().toString().c_str());
+            configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+            setenv("TZ", CLOCK_ZONES[clock_tz_idx].posix, 1);
+            tzset();
+        } else {
+            Serial.println("[OTA] WiFi still not connected after extra wait — skipping boot OTA");
+            wifiPrefs.putBool(NVS_KEY_OTA_PENDING, false);  // clear flag to avoid infinite reboot loop
+        }
+        lv_obj_del(lbl_ota_wifi);
+    }
     if (WiFi.status() == WL_CONNECTED && wifiPrefs.getBool(NVS_KEY_OTA_PENDING, false)) {
         wifiPrefs.putBool(NVS_KEY_OTA_PENDING, false);  // clear immediately — prevent reboot loops
         Serial.printf("[OTA] Boot OTA: %d bytes DMA free (pre-task)\n",

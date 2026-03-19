@@ -19,7 +19,7 @@
 #define DEFAULT_WIFI_PASSWORD ""
 
 // Firmware version
-#define FIRMWARE_VERSION "1.5.0-nightly.12e5b76"
+#define FIRMWARE_VERSION "1.6.0"
 #define GITHUB_REPO "OpenSurface/SonosESP"
 #define GITHUB_API_URL "https://api.github.com/repos/" GITHUB_REPO "/releases/latest"
 
@@ -109,6 +109,10 @@ extern volatile bool          art_download_in_progress;
 extern volatile unsigned long last_art_download_end_ms;
 extern volatile unsigned long last_track_change_ms;
 extern volatile unsigned long last_transient_500_ms;
+
+// On-demand queue window fetch
+extern volatile bool queue_fetch_requested;
+extern volatile int  queue_fetch_start_index;
 
 // UI state
 extern String ui_title, ui_artist, ui_repeat;

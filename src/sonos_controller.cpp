@@ -1229,22 +1229,35 @@ bool SonosController::updateTransportSettings() {
     return false;
 }
 
-bool SonosController::updateQueue() {
-    String resp = sendSOAP("ContentDirectory", "Browse",
+bool SonosController::updateQueue(int startIndex) {
+    // SONOS_QUEUE_BATCH_SIZE=10 → ~4KB response, ~3 WiFi RX buffers.
+    // Was 50 items → ~20KB, 14 TCP segs, all 32 WiFi RX buffers (~51KB DMA) — never released.
+    // startIndex: 0-based offset into queue. For a window centred on currentTrackNumber:
+    //   startIndex = max(0, currentTrackNumber - SONOS_QUEUE_BATCH_SIZE/2)
+    // so the view shows ~5 tracks before and ~5 after the currently playing track.
+    if (startIndex < 0) startIndex = 0;
+
+    String queueArgs =
         "<ObjectID>Q:0</ObjectID>"
         "<BrowseFlag>BrowseDirectChildren</BrowseFlag>"
         "<Filter>*</Filter>"
-        "<StartingIndex>0</StartingIndex>"
-        "<RequestedCount>50</RequestedCount>"
-        "<SortCriteria></SortCriteria>");
-    
+        "<StartingIndex>" + String(startIndex) + "</StartingIndex>"
+        "<RequestedCount>" + String(SONOS_QUEUE_BATCH_SIZE) + "</RequestedCount>"
+        "<SortCriteria></SortCriteria>";
+
+    size_t dma_pre_q = heap_caps_get_free_size(MALLOC_CAP_DMA);
+    String resp = sendSOAP("ContentDirectory", "Browse", queueArgs.c_str());
+    size_t dma_post_q = heap_caps_get_free_size(MALLOC_CAP_DMA);
+    Serial.printf("[QUEUE/DMA] pre=%uKB post=%uKB delta=%+dB start=%d batch=%d\n",
+                  (unsigned)(dma_pre_q / 1024), (unsigned)(dma_post_q / 1024),
+                  (int)((long)dma_post_q - (long)dma_pre_q), startIndex, SONOS_QUEUE_BATCH_SIZE);
+
     if (resp.length() == 0) {
         Serial.printf("[SONOS] Queue response empty\n");
         return false;
     }
 
-    // Large XML response (~50 items, ~20KB) stresses SDIO RX pool. Record completion
-    // time so the art task can wait before starting a large download after this.
+    // Record completion time so art/lyrics tasks wait before starting a large download.
     // sendSOAP() does NOT check this — SOAP play/pause commands are unaffected.
     last_queue_fetch_time = millis();
 
@@ -1279,7 +1292,7 @@ bool SonosController::updateQueue() {
             dev->queue[dev->queueSize].artist = decodeHTML(extractXMLRange(result, "dc:creator", itemStart, itemEnd));
             dev->queue[dev->queueSize].album = decodeHTML(extractXMLRange(result, "upnp:album", itemStart, itemEnd));
             dev->queue[dev->queueSize].albumArtURL = decodeHTML(extractXMLRange(result, "upnp:albumArtURI", itemStart, itemEnd));
-            dev->queue[dev->queueSize].trackNumber = dev->queueSize + 1;
+            dev->queue[dev->queueSize].trackNumber = startIndex + dev->queueSize + 1;  // 1-based absolute position
             dev->queueSize++;
 
             pos = itemEnd + 7;
@@ -1572,14 +1585,48 @@ void SonosController::pollingTaskFunction(void* param) {
 
             ctrl->updatePlaybackState();
 
+            // ── On-demand queue window fetch ──────────────────────────────────────
+            // Placed here (after both mandatory SOAPs, BEFORE mid-cycle guard) so
+            // it executes even during stable playback when pending==last_art_url.
+            // Two triggers:
+            //   (a) User opens queue screen / taps refresh → ev_queue() sets flag
+            //   (b) Track number changed → auto-set below so Next Up stays current
+            {
+                static int lastQueuedTrackNum = -1;
+                // Auto-trigger when track number changes (keeps Next Up populated)
+                if (!dev->isRadioStation && dev->currentTrackNumber > 0 &&
+                    dev->currentTrackNumber != lastQueuedTrackNum) {
+                    int half  = SONOS_QUEUE_BATCH_SIZE / 2;
+                    int start = dev->currentTrackNumber - half;
+                    if (start < 0) start = 0;
+                    if (dev->totalTracks > 0 && start + SONOS_QUEUE_BATCH_SIZE > dev->totalTracks)
+                        start = dev->totalTracks - SONOS_QUEUE_BATCH_SIZE;
+                    if (start < 0) start = 0;
+                    queue_fetch_start_index = start;
+                    queue_fetch_requested   = true;
+                    lastQueuedTrackNum = dev->currentTrackNumber;
+                }
+
+                if (queue_fetch_requested) {
+                    queue_fetch_requested = false;
+                    size_t dma_now = heap_caps_get_free_size(MALLOC_CAP_DMA);
+                    if (dma_now >= ART_MIN_DMA_PRE_BURST) {
+                        ctrl->updateQueue(queue_fetch_start_index);
+                        vTaskDelay(pdMS_TO_TICKS(SDIO_POST_QUEUE_DRAIN_MS));
+                    } else {
+                        Serial.printf("[POLL] Queue fetch deferred: DMA too low (%uKB)\n",
+                                      (unsigned)(dma_now / 1024));
+                        queue_fetch_requested = true;  // retry next cycle
+                    }
+                }
+            }
+
             // ── Mid-cycle guard ───────────────────────────────────────────────────
-            // art task wakes within 100ms of requestAlbumArt() setting pending_art_url.
-            // Until then, skip optional SOAPs — their responses land in pkt_rxbuff at
-            // the same time as the UPnP NOTIFY burst from the new track.
-            // Use !isEmpty() (not pending!=last) — isEmpty() clears only when art URL
-            // disappears (radio to no-art), never during stable playback. This ensures
-            // optional SOAPs stay suppressed for the full NOTIFY storm window.
-            if (art_download_in_progress || !pending_art_url.isEmpty()) {
+            // Skip optional SOAPs while a new track's art is still pending download.
+            // Guard clears once the art task downloads and syncs pending_art_url=last_art_url.
+            // Uses != last_art_url (NOT !isEmpty()): isEmpty() is true for any stream with
+            // art → would block volume/transport/queue polling forever during stable playback.
+            if (art_download_in_progress || pending_art_url != last_art_url) {
                 tick++;
                 continue;
             }
@@ -1614,17 +1661,18 @@ void SonosController::pollingTaskFunction(void* param) {
                 ctrl->updateTransportSettings();
             }
 
-            // Queue polling - skip for radio stations and when DMA is low.
-            // updateQueue() returns ~20KB Browse response. Confirmed: firing it when
-            // DMA is already depleted (WiFi dynamic buffers allocated) pushes DMA floor
-            // further and triggers the WiFi buffer full-allocation event (~71KB one-time
-            // drop). Gate on DMA > ART_MIN_DMA_PRE_BURST (36KB) — if DMA is below the
-            // art download threshold, the queue poll residue would prevent art from loading
-            // anyway, so skipping it has no functional cost.
+            // Background queue refresh every POLL_QUEUE_MODULO cycles (60s).
+            // Uses windowed fetch centred on currentTrackNumber — same window as on-demand.
             if (tick % POLL_QUEUE_MODULO == 0 && !dev->isRadioStation) {
                 size_t dma_now = heap_caps_get_free_size(MALLOC_CAP_DMA);
                 if (dma_now >= ART_MIN_DMA_PRE_BURST) {
-                    ctrl->updateQueue();
+                    int half  = SONOS_QUEUE_BATCH_SIZE / 2;
+                    int start = (dev->currentTrackNumber > 0) ? (dev->currentTrackNumber - half) : 0;
+                    if (start < 0) start = 0;
+                    if (dev->totalTracks > 0 && start + SONOS_QUEUE_BATCH_SIZE > dev->totalTracks)
+                        start = dev->totalTracks - SONOS_QUEUE_BATCH_SIZE;
+                    if (start < 0) start = 0;
+                    ctrl->updateQueue(start);
                     vTaskDelay(pdMS_TO_TICKS(SDIO_POST_QUEUE_DRAIN_MS));
                 } else {
                     Serial.printf("[POLL] Queue poll skipped: DMA too low (%uKB < %uKB)\n",

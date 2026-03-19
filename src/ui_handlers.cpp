@@ -120,9 +120,20 @@ void ev_devices(lv_event_t* e) {
 }
 
 void ev_queue(lv_event_t* e) {
-    // Use cached queue data — background poll updates dev->queue[] every 30s.
-    // Calling updateQueue() here fires a large SOAP response immediately before
-    // the user selects a track (art download) → SDIO RX pool exhausted → crash.
+    // Show cached data immediately, then request a fresh windowed fetch.
+    // The polling task picks up queue_fetch_requested and calls updateQueue(startIndex)
+    // on its next cycle (safe: no SOAP on UI thread).
+    SonosDevice* d = sonos.getCurrentDevice();
+    int start = 0;
+    if (d && d->currentTrackNumber > 0) {
+        start = d->currentTrackNumber - SONOS_QUEUE_BATCH_SIZE / 2;
+        if (start < 0) start = 0;
+        if (d->totalTracks > 0 && start + SONOS_QUEUE_BATCH_SIZE > d->totalTracks)
+            start = d->totalTracks - SONOS_QUEUE_BATCH_SIZE;
+        if (start < 0) start = 0;
+    }
+    queue_fetch_start_index = start;
+    queue_fetch_requested   = true;
     refreshQueueList();
     lv_screen_load(scr_queue);
 }
@@ -1843,7 +1854,13 @@ void processUpdates() {
     static uint32_t lastUpdate = 0;
     UIUpdate_t upd;
     bool need = false;
-    while (xQueueReceive(sonos.getUIUpdateQueue(), &upd, 0)) need = true;
+    bool queue_updated = false;
+    while (xQueueReceive(sonos.getUIUpdateQueue(), &upd, 0)) {
+        need = true;
+        if (upd.type == UPDATE_QUEUE) queue_updated = true;
+    }
     if (need && (millis() - lastUpdate > 200)) { updateUI(); lastUpdate = millis(); }
     else displayCompletedArt();  // Run even without Sonos events (e.g. art ready while polling suppressed)
+    // Auto-refresh queue list if the queue screen is visible when new data arrives
+    if (queue_updated && lv_screen_active() == scr_queue) refreshQueueList();
 }

@@ -118,7 +118,7 @@
 // Polling tick modulos (base interval = 300ms, so N ticks = N * 300ms)
 #define POLL_VOLUME_MODULO      5       // Volume every 1.5s (5 * 300ms)
 #define POLL_TRANSPORT_MODULO   10      // Transport settings every 3s
-#define POLL_QUEUE_MODULO       100     // Queue every 30s (optimized: was 50/15s)
+#define POLL_QUEUE_MODULO       200     // Queue every 60s (was 100/30s — halved to reduce DMA pressure)
 #define POLL_MEDIA_INFO_MODULO  50      // Radio station info every 15s
 #define POLL_BASE_INTERVAL_MS   300     // Base polling interval
 
@@ -270,11 +270,12 @@
                                             // catches the WiFi-alloc drop → aborts before :928.
 #define ART_MIN_FREE_DMA             8000   // Min DMA before art pre-connect (DMA wait loop gate — vestigial).
 #define ART_MIN_DMA_PRE_BURST       20000   // Min DMA before http.GET() (BEFORE burst arrives).
-                                            // Immediate burst drain (pre-alloc jpgBuf + drain loop right after GET)
-                                            // frees TCP pbufs before :928 crash window closes, so we no longer need
-                                            // 34KB headroom. Steady-state DMA floor = 28-32KB > 20KB → always passes.
-                                            // Crash floor = ~6-7KB; 20KB = crash_floor + ~13KB safety margin.
-                                            // Was 34KB: above 28-32KB floor → all art downloads aborted (art never loaded).
+                                            // Session DMA depletion: ~10KB permanent loss per art download
+                                            // (WiFi dynamic RX buffer accumulation — platform-level, unfixable in app).
+                                            // At DMA=20-38KB: burst (14-21KB) → dl-start ~0-18KB → mid-read WiFi
+                                            // alloc ~15KB → :928. ART_DMA_MID_READ_MIN=8KB catches the drop.
+                                            // At DMA<20KB: abort cleanly → 3 aborts → esp_restart() → ~120KB DMA.
+                                            // Was 45000: caused early abort at 38KB → 6s wait before restart vs instant.
 #define ART_DMA_MID_READ_MIN         8000   // Abort if DMA < this DURING the chunk read loop. Belt-and-suspenders:
                                             // if WiFi dynamic RX buffers allocate ~15KB after dl-start passes, this
                                             // catches the resulting DMA drop before it hits the crash floor (~6-7KB).

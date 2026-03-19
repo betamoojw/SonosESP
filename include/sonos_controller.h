@@ -199,7 +199,7 @@ public:
     bool updateMediaInfo();          // Get station name for radio from GetMediaInfo
     bool updatePlaybackState();
     bool updateVolume();
-    bool updateQueue();
+    bool updateQueue(int startIndex = 0);  // startIndex: 0-based SOAP StartingIndex for windowed fetch
     bool updateTransportSettings();
     
     // Queue access

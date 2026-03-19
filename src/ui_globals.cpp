@@ -148,6 +148,10 @@ volatile unsigned long last_art_download_end_ms = 0; // Set after large HTTP dow
 volatile unsigned long last_track_change_ms  = 0; // Set by requestAlbumArt(); 2000ms NOTIFY settle
 volatile unsigned long last_transient_500_ms = 0; // Set by sendSOAP() on 500; 3000ms HLS storm gate
 
+// On-demand queue window fetch (set by ev_queue / refresh button; consumed by polling task)
+volatile bool queue_fetch_requested   = false;
+volatile int  queue_fetch_start_index = 0;    // 0-based SOAP StartingIndex for the window
+
 // ============================================================================
 // UI State
 // ============================================================================

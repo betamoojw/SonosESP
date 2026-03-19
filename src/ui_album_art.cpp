@@ -870,6 +870,17 @@ void albumArtTask(void* param) {
         Serial.println("[ART] LRU cache allocation failed — cache disabled");
     }
 
+    // Permanent 280KB PSRAM download buffer — allocated once, never freed.
+    // Eliminates per-download PSRAM heap alloc/free fragmentation:
+    //   - Back-to-back downloads can't fail due to heap fragmentation (even with 10MB+ free PSRAM)
+    //   - No risk of malloc returning nullptr mid-download due to previous alloc not yet freed by lwIP
+    // Safe to reuse across iterations: bytesRead/pre_drained track how much is valid each download.
+    static uint8_t* art_jpgbuf = nullptr;
+    if (!art_jpgbuf)
+        art_jpgbuf = (uint8_t*)heap_caps_malloc(MAX_ART_SIZE, MALLOC_CAP_SPIRAM);
+    if (!art_jpgbuf)
+        Serial.println("[ART] art_jpgbuf PSRAM alloc failed — downloads will be disabled");
+
     // Initialize ESP32-P4 Hardware JPEG Decoder
     jpeg_decode_engine_cfg_t hw_jpeg_cfg = {
         .intr_priority = 0,
@@ -1045,20 +1056,19 @@ void albumArtTask(void* param) {
                                   (unsigned)dma_snap, (unsigned)ART_MIN_DMA_PRE_BURST,
                                   (unsigned)(largest / 1024), dma_fail_count);
                     if (dma_fail_count >= 3) {
-                        // Give up: mark URL as handled so the outer loop stops retrying
-                        // until the track changes (same as WiFi-not-connected path).
-                        // DMA won't recover without a reboot; retrying wastes CPU/log.
-                        Serial.printf("[ART] DMA low x%d — giving up, showing placeholder\n",
-                                      dma_fail_count);
-                        if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(100))) {
-                            last_art_url = url;  // marks URL "handled" → outer loop skips it
-                            xSemaphoreGive(art_mutex);
-                        }
-                        dma_fail_count = 0;
-                        dma_fail_url[0] = '\0';
-                        // Do NOT set last_art_download_end_ms — no network traffic happened.
-                        // Do NOT set art_download_in_progress — cleared by outer no-URL path.
+                        // DMA permanently depleted — restart to restore ~115KB DMA.
+                        // Clear flag FIRST so polling fires SOAPs during the 3s flush wait,
+                        // keeping SDIO warm and preventing DMA clock-gate before restart.
+                        Serial.printf("[ART] DMA low x%d (largest=%uKB) — restarting to recover DMA\n",
+                                      dma_fail_count,
+                                      (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_DMA)/1024));
+                        art_download_in_progress = false;  // keep SDIO warm during restart wait
+                        vTaskDelay(pdMS_TO_TICKS(3000));  // let serial flush + SDIO settle
+                        esp_restart();
                     } else {
+                        // Clear flag so polling keeps SDIO warm during recovery wait.
+                        // Flag will be set true again after sdioPreWait on the next iteration.
+                        art_download_in_progress = false;
                         vTaskDelay(pdMS_TO_TICKS(2000));  // brief wait before retry
                         // Do NOT set last_art_download_end_ms — no network happened.
                     }
@@ -1093,12 +1103,15 @@ void albumArtTask(void* param) {
 
                     // Re-check cooldowns under mutex (another task may have used network while we waited)
                     // SDIO_GENERAL_COOLDOWN_MS (200ms) applied OUTSIDE the mutex in sdioPreWait.
-                    // Inside the mutex, only a short TCP FIN-ACK drain is needed (LAN <1ms).
-                    // Using 200ms here blocks the mutex for 200ms → SDIO idle → C6 power-save
-                    // → DMA clock-gate → pkt_rxbuff overflow → :928 on next TCP connection.
-                    // 10ms covers the FIN-ACK race window without triggering clock-gate.
+                    // Inside the mutex we need enough time for the last SOAP's TCP FIN-ACK to
+                    // arrive and be drained from C6 pkt_rxbuff before we open the art connection.
+                    // WiFi FIN-ACK RTT on LAN: ~10-30ms. The old 10ms was too short:
+                    // SOAP #N completes → mutex released → art acquires mutex (net=0ms) → only
+                    // 23ms passes before http.GET() → FIN-ACK still in transit → GET response
+                    // arrives simultaneously → pkt_rxbuff overflow → :928.
+                    // 50ms covers WiFi RTT with margin and is well below DMA clock-gate threshold.
                     {
-                        const unsigned long kInnerNetCooldownMs = 10;
+                        const unsigned long kInnerNetCooldownMs = 50;
                         if (last_network_end_ms > 0) {
                             unsigned long elapsed = millis() - last_network_end_ms;
                             if (elapsed < kInnerNetCooldownMs) {
@@ -1109,13 +1122,15 @@ void albumArtTask(void* param) {
                     // HTTPS TCP residue drain — catches lyrics→art race.
                     // If lyrics HTTPS completed while art waited for the mutex, last_https_end_ms
                     // is fresh. Art is HTTP-only (HTTPS downgraded in prepareAlbumArtURL), so we
-                    // only need TCP FIN-ACK drain time (SDIO_HTTPS_TCP_CLOSE_MS = 500ms), NOT the
-                    // full 3000ms DMA settle used between two HTTPS sessions. Using 3000ms here
-                    // caused 3s of SDIO silence → P4 SDIO DMA clock-gate → pkt_rxbuff overflow.
+                    // only need TCP FIN-ACK drain time. On LAN, TLS close_notify + TCP FIN-ACK
+                    // completes in <30ms; SDIO_TCP_CLOSE_MS (200ms) is ample margin.
+                    // Was SDIO_HTTPS_TCP_CLOSE_MS (500ms) — too long: if lyrics finished 100ms
+                    // before mutex acquisition, art waits 400ms inside mutex → SDIO idle →
+                    // C6 DMA clock-gate → pkt_rxbuff overflow on next TCP connection.
                     if (last_https_end_ms > 0) {
                         unsigned long elapsed = millis() - last_https_end_ms;
-                        if (elapsed < SDIO_HTTPS_TCP_CLOSE_MS) {
-                            vTaskDelay(pdMS_TO_TICKS(SDIO_HTTPS_TCP_CLOSE_MS - elapsed));
+                        if (elapsed < SDIO_TCP_CLOSE_MS) {
+                            vTaskDelay(pdMS_TO_TICKS(SDIO_TCP_CLOSE_MS - elapsed));
                         }
                     }
                     // Inside-mutex rechecks for queue-poll and inter-download: the full cooldowns
@@ -1189,12 +1204,12 @@ void albumArtTask(void* param) {
                         lwip_setsockopt(preClient.fd(), SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
                         vTaskDelay(pdMS_TO_TICKS(1));
                     }
-                    // Pre-allocate art buffer BEFORE GET so the full body can drain directly
-                    // into the final download buffer immediately after GET() returns.
+                    // Use the permanent static PSRAM download buffer — no per-download alloc.
+                    // art_jpgbuf is allocated once in albumArtTask init and reused every iteration.
                     const size_t max_art_size = MAX_ART_SIZE;
-                    uint8_t* jpgBuf = (uint8_t*)heap_caps_malloc(max_art_size, MALLOC_CAP_SPIRAM);
+                    uint8_t* jpgBuf = art_jpgbuf;  // static PSRAM buffer; null only if init failed
                     size_t pre_drained = 0;
-                    if (!jpgBuf) Serial.println("[ART] Pre-alloc failed — full drain disabled");
+                    if (!jpgBuf) Serial.println("[ART] art_jpgbuf unavailable — full drain disabled");
                     size_t dma_pre_get = heap_caps_get_free_size(MALLOC_CAP_DMA);
                     artLogMem("pre-GET");
                     artLogSDIO("pre-GET");
@@ -1229,6 +1244,12 @@ void albumArtTask(void* param) {
                                 size_t _g = _sd->readBytes(jpgBuf + pre_drained, _c);
                                 if (!_g) break;
                                 pre_drained += _g;
+                                // 5ms inter-chunk yield: gives SDIO time to drain residual
+                                // packets (500 FIN-ACK, SSDP, etc.) between server windows.
+                                // Without this, rapid tcp_recved() calls fire successive
+                                // windows faster than P4 SDIO can pull them from C6
+                                // pkt_rxbuff → :928 overflow. Same fix as main read loop.
+                                vTaskDelay(pdMS_TO_TICKS(5));
                             }
                         }
                     }
@@ -1242,10 +1263,9 @@ void albumArtTask(void* param) {
                 const bool len_known = (len > 0);
                 if ((len_known && len < (int)max_art_size) || !len_known) {
                     size_t alloc_len = len_known ? (size_t)len : max_art_size;
-                    // jpgBuf pre-allocated (max_art_size PSRAM bytes) above; alloc_len ≤ max_art_size.
+                    // jpgBuf points to the static 280KB PSRAM buffer (art_jpgbuf).
                     // pre_drained bytes already in jpgBuf[0..pre_drained-1] (full body if drain succeeded).
-                    // Fall back to a fresh alloc if the pre-alloc failed.
-                    if (!jpgBuf) jpgBuf = (uint8_t*)heap_caps_malloc(alloc_len, MALLOC_CAP_SPIRAM);
+                    // alloc_len ≤ MAX_ART_SIZE, so the buffer is always large enough.
 
                     if (len_known) {
                         Serial.printf("[ART] Downloading album art: %d bytes\n", len);
@@ -1261,11 +1281,11 @@ void albumArtTask(void* param) {
                                   dma_pre_get > dma_dl_start ? (unsigned)(dma_pre_get - dma_dl_start) : 0u);
                     if (dma_dl_start < ART_TCP_RCVBUF_DL_SAFETY || !jpgBuf) {
                         if (!jpgBuf)
-                            Serial.println("[ART] jpgBuf PSRAM alloc failed — aborting");
+                            Serial.println("[ART] art_jpgbuf unavailable — aborting");
                         else
                             Serial.printf("[ART] DMA too low at dl-start (%u < %u) — aborting\n",
                                           (unsigned)dma_dl_start, (unsigned)ART_TCP_RCVBUF_DL_SAFETY);
-                        if (jpgBuf) { heap_caps_free(jpgBuf); jpgBuf = nullptr; }
+                        jpgBuf = nullptr;  // static buffer — don't free, just mark unavailable for this iteration
                         http.end();
                         vTaskDelay(pdMS_TO_TICKS(SDIO_TCP_CLOSE_MS));
                         last_network_end_ms      = millis();
@@ -1395,7 +1415,7 @@ void albumArtTask(void* param) {
                         if (!readSuccess) {
                             Serial.println("[ART] Download failed/aborted - closing connection");
                             stream->stop();  // TCP RST - kills connection immediately
-                            heap_caps_free(jpgBuf); jpgBuf = nullptr;
+                            jpgBuf = nullptr;  // static buffer — don't free
                             // CRITICAL: http.end() + secure_client.stop() free TLS/DMA memory
                             // After TCP RST, these won't send SDIO traffic (socket is dead)
                             // but they WILL release DMA buffers used by esp-aes
@@ -1502,9 +1522,9 @@ void albumArtTask(void* param) {
                                 }
                             }
                         }
-                        heap_caps_free(jpgBuf); jpgBuf = nullptr;
+                        jpgBuf = nullptr;  // static buffer — don't free
                     } else {
-                        Serial.printf("[ART] Failed to allocate %d bytes for album art\n", len);
+                        Serial.printf("[ART] art_jpgbuf unavailable — cannot download %d bytes\n", len);
                         // Mark as done - memory issue, retry won't help
                         if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(100))) {
                             last_art_url = url;
@@ -1532,7 +1552,7 @@ void albumArtTask(void* param) {
                     last_network_end_ms      = millis();
                     last_art_download_end_ms = millis();   // gate inter-download cooldown after oversized abort
                     if (use_https) last_https_end_ms = millis();
-                    if (jpgBuf) { heap_caps_free(jpgBuf); jpgBuf = nullptr; }
+                    jpgBuf = nullptr;  // static buffer — don't free
                     xSemaphoreGive(network_mutex);
                     mutex_acquired = false;
                     continue;
@@ -1601,8 +1621,8 @@ void albumArtTask(void* param) {
                         if (use_https) last_https_end_ms = millis();
                     }
 
-                    // Safety: free jpgBuf if not already freed (HTTP error, alloc-fail paths)
-                    if (jpgBuf) { heap_caps_free(jpgBuf); jpgBuf = nullptr; }
+                    // jpgBuf points to static art_jpgbuf — never freed between downloads.
+                    jpgBuf = nullptr;
                     // Release network_mutex after ALL network activity including TLS cleanup
                     if (mutex_acquired) {
                         xSemaphoreGive(network_mutex);

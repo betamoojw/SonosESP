@@ -124,9 +124,20 @@ void ev_devices(lv_event_t* e) {
 }
 
 void ev_queue(lv_event_t* e) {
-    // Use cached queue data — background poll updates dev->queue[] every 30s.
-    // Calling updateQueue() here fires a large SOAP response immediately before
-    // the user selects a track (art download) → SDIO RX pool exhausted → crash.
+    // Show cached data immediately, then request a fresh windowed fetch.
+    // The polling task picks up queue_fetch_requested and calls updateQueue(startIndex)
+    // on its next cycle (safe: no SOAP on UI thread).
+    SonosDevice* d = sonos.getCurrentDevice();
+    int start = 0;
+    if (d && d->currentTrackNumber > 0) {
+        start = d->currentTrackNumber - SONOS_QUEUE_BATCH_SIZE / 2;
+        if (start < 0) start = 0;
+        if (d->totalTracks > 0 && start + SONOS_QUEUE_BATCH_SIZE > d->totalTracks)
+            start = d->totalTracks - SONOS_QUEUE_BATCH_SIZE;
+        if (start < 0) start = 0;
+    }
+    queue_fetch_start_index = start;
+    queue_fetch_requested   = true;
     refreshQueueList();
     lv_screen_load(scr_queue);
 }
@@ -699,55 +710,10 @@ static void otaRecovery() {
     Serial.println("[OTA] === Recovery complete ===");
 }
 
-static void performOTAUpdate() {
-    if (download_url.length() == 0) {
-        if (lbl_ota_status) {
-            lv_label_set_text(lbl_ota_status, LV_SYMBOL_WARNING " No update URL found");
-            lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
-        }
-        return;
-    }
-
-    // ================================================================
-    // PHASE 1: IMMEDIATE UI FEEDBACK
-    // ================================================================
-    // Show "Preparing..." IMMEDIATELY so user knows button press registered
-    if (btn_install_update) lv_obj_add_state(btn_install_update, LV_STATE_DISABLED);
-    if (btn_check_update) lv_obj_add_state(btn_check_update, LV_STATE_DISABLED);
-    if (lbl_ota_status) {
-        lv_label_set_text(lbl_ota_status, LV_SYMBOL_REFRESH " Preparing update...");
-        lv_obj_set_style_text_color(lbl_ota_status, COL_ACCENT, 0);
-    }
-    if (bar_ota_progress) {
-        lv_obj_clear_flag(bar_ota_progress, LV_OBJ_FLAG_HIDDEN);
-        lv_bar_set_value(bar_ota_progress, 0, LV_ANIM_OFF);
-    }
-    lv_tick_inc(10);
-    lv_refr_now(NULL);  // Force immediate refresh so user sees feedback
-
-    Serial.println("[OTA] ========================================");
-    Serial.println("[OTA] PREPARING FOR FIRMWARE UPDATE");
-    Serial.println("[OTA] ========================================");
-
-    // ================================================================
-    // PHASE 2: WAIT FOR PREVIOUS HTTPS CLEANUP
-    // ================================================================
-    unsigned long now = millis();
-    unsigned long elapsed = now - last_https_end_ms;
-    if (last_https_end_ms > 0 && elapsed < OTA_HTTPS_COOLDOWN_MS) {
-        unsigned long wait_ms = OTA_HTTPS_COOLDOWN_MS - elapsed;
-        Serial.printf("[OTA] Waiting for previous HTTPS cleanup: %lums\n", wait_ms);
-        if (lbl_ota_status) {
-            lv_label_set_text(lbl_ota_status, LV_SYMBOL_REFRESH " Waiting for network cleanup...");
-        }
-        lv_tick_inc(10);
-        lv_refr_now(NULL);
-        vTaskDelay(pdMS_TO_TICKS(wait_ms));
-    }
-
-    // ================================================================
-    // PHASE 3: STOP ALL BACKGROUND TASKS
-    // ================================================================
+// Signals all background tasks to stop, waits up to 12s for clean exit,
+// force-kills stragglers, recreates the network mutex, sets ota_in_progress.
+// Returns true if any task was force-killed (indicates possible DMA leak).
+static bool otaStopTasks() {
     if (lbl_ota_status) {
         lv_label_set_text(lbl_ota_status, LV_SYMBOL_REFRESH " Stopping background tasks...");
     }
@@ -761,24 +727,9 @@ static void performOTAUpdate() {
     lyrics_shutdown_requested     = true;
     lyrics_abort_requested        = true;
     clock_bg_shutdown_requested   = true;
-    sonos_tasks_shutdown_requested = true;  // Sonos exits within its 2s SOAP timeout
+    sonos_tasks_shutdown_requested = true;
 
-    // ─── PARALLEL TASK SHUTDOWN ──────────────────────────────────────────────
-    // All tasks received their shutdown signals simultaneously above.
-    // We wait for ALL of them in ONE combined loop — the total wait is bounded
-    // by the SLOWEST task, not the sum of all tasks.
-    //
-    // Worst-case exit times after signal:
-    //   Art:     < 1 s   — checks art_abort_download every 5–15 ms
-    //   Lyrics: ≤ 10 s   — HTTPClient.GET() blocks until response or timeout
-    //   ClockBg: < 0.5 s — 500 ms polling loop; shutdown flag checked every tick
-    // → 12 s covers all tasks running simultaneously (not sequentially).
-    //
-    // CRITICAL: Force-deleting a task that holds an active TLS session leaks
-    // its mbedTLS DMA (~40 KB per session). WiFi.disconnect() clears TCP
-    // TIME_WAIT sockets but CANNOT reclaim mbedTLS DMA — those buffers are only
-    // freed by secure_client.stop(). Always prefer clean exit over force-kill.
-    // If a future task is added that does HTTPS, add its handle to this loop.
+    bool force_killed = false;
     {
         const uint32_t SHUTDOWN_BUDGET_MS = 12000;
         uint32_t shutdown_start = millis();
@@ -792,10 +743,6 @@ static void performOTAUpdate() {
             esp_task_wdt_reset();
         }
 
-        // Force-delete any stragglers that did not exit in time.
-        // A force-killed task that owned a TLS session leaks DMA; the DMA
-        // polling step below will detect this and wait for it to recover.
-        bool force_killed = false;
         if (albumArtTaskHandle) {
             Serial.println("[OTA] WARNING: Force-killing art task (possible DMA leak)");
             vTaskDelete(albumArtTaskHandle);
@@ -815,8 +762,6 @@ static void performOTAUpdate() {
             force_killed = true;
         }
         if (force_killed) {
-            // Let FreeRTOS idle task reclaim TCB memory and allow any pending
-            // SDIO DMA descriptor to flush before we proceed.
             vTaskDelay(pdMS_TO_TICKS(500));
             esp_task_wdt_reset();
         }
@@ -825,32 +770,29 @@ static void performOTAUpdate() {
                       heap_caps_get_free_size(MALLOC_CAP_DMA));
     }
 
-    // Sonos tasks: signaled at t=0 alongside the others and have had the full
-    // 12 s to exit cleanly (Sonos SOAP timeout is 2 s, so this is usually instant).
     Serial.println("[OTA] Suspending Sonos tasks...");
     sonos.suspendTasks();
 
-    // ─── NETWORK MUTEX RECREATION ────────────────────────────────────────────
-    // A force-deleted task may have held network_mutex, leaving it permanently
-    // poisoned — no owner remains to give it back, so xSemaphoreTake() would
-    // block until its 3 s timeout then silently continue with broken state.
-    // Solution: delete and recreate the mutex unconditionally after all tasks
-    // are dead. This is always safe here because:
-    //   • every user task is now dead or suspended,
-    //   • ota_in_progress (set below) suppresses network ops in loop().
-    // Post-OTA recovery restarts tasks with the new, clean mutex handle.
+    // Recreate network mutex — a force-killed task may have left it poisoned.
     if (network_mutex) {
         vSemaphoreDelete(network_mutex);
         network_mutex = xSemaphoreCreateMutex();
         Serial.println("[OTA] Network mutex recreated (clean state)");
     }
 
-    // Set OTA-in-progress flag (suppresses UI updates and non-OTA network ops)
     if (xSemaphoreTake(ota_progress_mutex, pdMS_TO_TICKS(1000))) {
         ota_in_progress = true;
         xSemaphoreGive(ota_progress_mutex);
     }
 
+    return force_killed;
+}
+
+// Waits for TIME_WAIT TCP sockets to release DMA after task shutdown.
+// If DMA remains below OTA_TARGET_FREE_DMA after OTA_DMA_POLL_MS, saves URL
+// to NVS and calls ESP.restart() — does NOT return in that case.
+// On success, configures WiFi for the download and returns normally.
+static void otaCheckDMA() {
     // ================================================================
     // PHASE 4: CLEAR NETWORK STATE AND VERIFY DMA
     // ================================================================
@@ -930,6 +872,63 @@ static void performOTAUpdate() {
     // WiFi already connected; disable auto-reconnect and power-save for download
     WiFi.setAutoReconnect(false);
     WiFi.setSleep(false);
+}
+
+static void performOTAUpdate() {
+    if (download_url.length() == 0) {
+        if (lbl_ota_status) {
+            lv_label_set_text(lbl_ota_status, LV_SYMBOL_WARNING " No update URL found");
+            lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
+        }
+        return;
+    }
+
+    // ================================================================
+    // PHASE 1: IMMEDIATE UI FEEDBACK
+    // ================================================================
+    // Show "Preparing..." IMMEDIATELY so user knows button press registered
+    if (btn_install_update) lv_obj_add_state(btn_install_update, LV_STATE_DISABLED);
+    if (btn_check_update) lv_obj_add_state(btn_check_update, LV_STATE_DISABLED);
+    if (lbl_ota_status) {
+        lv_label_set_text(lbl_ota_status, LV_SYMBOL_REFRESH " Preparing update...");
+        lv_obj_set_style_text_color(lbl_ota_status, COL_ACCENT, 0);
+    }
+    if (bar_ota_progress) {
+        lv_obj_clear_flag(bar_ota_progress, LV_OBJ_FLAG_HIDDEN);
+        lv_bar_set_value(bar_ota_progress, 0, LV_ANIM_OFF);
+    }
+    lv_tick_inc(10);
+    lv_refr_now(NULL);  // Force immediate refresh so user sees feedback
+
+    Serial.println("[OTA] ========================================");
+    Serial.println("[OTA] PREPARING FOR FIRMWARE UPDATE");
+    Serial.println("[OTA] ========================================");
+
+    // ================================================================
+    // PHASE 2: WAIT FOR PREVIOUS HTTPS CLEANUP
+    // ================================================================
+    unsigned long now = millis();
+    unsigned long elapsed = now - last_https_end_ms;
+    if (last_https_end_ms > 0 && elapsed < OTA_HTTPS_COOLDOWN_MS) {
+        unsigned long wait_ms = OTA_HTTPS_COOLDOWN_MS - elapsed;
+        Serial.printf("[OTA] Waiting for previous HTTPS cleanup: %lums\n", wait_ms);
+        if (lbl_ota_status) {
+            lv_label_set_text(lbl_ota_status, LV_SYMBOL_REFRESH " Waiting for network cleanup...");
+        }
+        lv_tick_inc(10);
+        lv_refr_now(NULL);
+        vTaskDelay(pdMS_TO_TICKS(wait_ms));
+    }
+
+    // ================================================================
+    // PHASE 3: STOP ALL BACKGROUND TASKS
+    // ================================================================
+    bool force_killed = otaStopTasks();
+
+    // ================================================================
+    // PHASE 4: CLEAR NETWORK STATE AND VERIFY DMA
+    // ================================================================
+    otaCheckDMA();  // polls TIME_WAIT sockets; restarts if DMA still low; sets WiFi mode
 
     // ================================================================
     // PHASE 5+6: CONNECT AND DOWNLOAD (retry on connection failure)
@@ -1376,28 +1375,25 @@ void triggerPendingOTA() {
 }
 
 // ============================================================================
-// UI Update Function
 // ============================================================================
-void updateUI() {
-    SonosDevice* d = sonos.getCurrentDevice();
-    if (!d) return;
+// updateUI() Sub-Functions (static — implementation details, not in any header)
+// ============================================================================
 
-    // Track connection state - start as disconnected to avoid false triggers
-    static bool was_connected = false;
-    static bool ui_cleared = false;
+// Handles disconnect/reconnect UI state. Returns true if device is connected
+// and updateUI() should continue. Returns false → caller must return immediately.
+static bool updateConnectionState(SonosDevice* d) {
+    static bool was_connected  = false;
+    static bool ui_cleared     = false;
     static bool last_conn_state = false;
 
-    // Debug: Log connection state changes
     if (d->connected != last_conn_state) {
         Serial.printf("[UI] Connection state changed: %s (errorCount=%d)\n",
                      d->connected ? "CONNECTED" : "DISCONNECTED", d->errorCount);
         last_conn_state = d->connected;
     }
 
-    // Handle disconnection - only clear UI once
     if (!d->connected) {
         if (was_connected || !ui_cleared) {
-            // Device just disconnected or first time showing disconnect state
             lv_label_set_text(lbl_title, "Device Not Connected");
             lv_label_set_text(lbl_artist, "");
             lv_label_set_text(lbl_album, "");
@@ -1405,21 +1401,17 @@ void updateUI() {
             lv_label_set_text(lbl_time_remaining, "0:00");
             lv_slider_set_value(slider_progress, 0, LV_ANIM_OFF);
 
-            // Hide album art, show placeholder
             lv_obj_add_flag(img_album, LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(art_placeholder, LV_OBJ_FLAG_HIDDEN);
 
-            // Hide next track info
             lv_obj_add_flag(img_next_album, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(lbl_next_title, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(lbl_next_artist, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(lbl_next_header, LV_OBJ_FLAG_HIDDEN);
 
-            // Reset background color to default dark
-            if (panel_art) lv_obj_set_style_bg_color(panel_art, lv_color_hex(0x1a1a1a), 0);
+            if (panel_art)   lv_obj_set_style_bg_color(panel_art,   lv_color_hex(0x1a1a1a), 0);
             if (panel_right) lv_obj_set_style_bg_color(panel_right, COL_BG, 0);
 
-            // Reset play button to pause icon
             lv_obj_t* lbl = lv_obj_get_child(btn_play, 0);
             lv_label_set_text(lbl, LV_SYMBOL_PAUSE);
             lv_obj_center(lbl);
@@ -1430,18 +1422,301 @@ void updateUI() {
             ui_cleared = true;
             Serial.println("[UI] Device disconnected - UI cleared");
         }
-        return;  // Don't update UI when disconnected
+        return false;  // not connected
     }
 
-    // Handle reconnection - force UI refresh
     if (d->connected && !was_connected) {
         was_connected = true;
         ui_cleared = false;
-        // Force refresh of all UI elements by clearing cached values
         ui_title = "";
         ui_artist = "";
         Serial.println("[UI] Device reconnected - forcing UI refresh");
     }
+    return true;  // connected
+}
+
+// Displays art or placeholder from the background art task.
+// Must be called on the main LVGL thread. Takes art_mutex internally.
+static void displayCompletedArt() {
+    if (!xSemaphoreTake(art_mutex, 0)) return;
+
+    if (art_ready) {
+        // Build art_dsc here on the main thread — same thread as lv_timer_handler() /
+        // LVGL renderer — so there is never concurrent read+write of the descriptor.
+        // The background art task only writes art_buffer (pixels); we set the header here.
+        memset(&art_dsc, 0, sizeof(art_dsc));
+        art_dsc.header.w    = ART_SIZE;
+        art_dsc.header.h    = ART_SIZE;
+        art_dsc.header.cf   = LV_COLOR_FORMAT_RGB565;
+        art_dsc.data_size   = ART_SIZE * ART_SIZE * 2;
+        art_dsc.data        = (const uint8_t*)art_buffer;
+        lv_img_set_src(img_album, &art_dsc);
+        lv_obj_set_size(img_album, ART_SIZE, ART_SIZE);
+        lv_obj_center(img_album);
+        lv_obj_remove_flag(img_album, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(art_placeholder, LV_OBJ_FLAG_HIDDEN);
+        art_ready = false;
+        art_show_placeholder = false;
+    } else if (art_show_placeholder) {
+        lv_obj_add_flag(img_album, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(art_placeholder, LV_OBJ_FLAG_HIDDEN);
+        art_show_placeholder = false;
+    }
+    if (color_ready && panel_art && panel_right) {
+        setBackgroundColor(dominant_color);
+        color_ready = false;
+    }
+    xSemaphoreGive(art_mutex);
+}
+
+// Updates the "Next Up" track labels from the cached queue.
+static void updateNextTrackUI(SonosDevice* d) {
+    static String last_next_title = "";
+
+    if (!d->isRadioStation && d->queueSize > 0 && d->currentTrackNumber > 0) {
+        int nextIdx = -1;
+
+        // Find next track after current
+        for (int i = 0; i < d->queueSize; i++) {
+            if (d->queue[i].trackNumber == d->currentTrackNumber + 1) {
+                nextIdx = i;
+                break;
+            }
+        }
+
+        // If we're on last track and repeat is on, show first track
+        if (nextIdx < 0 && (d->repeatMode == "ALL" || d->repeatMode == "ONE")) {
+            for (int i = 0; i < d->queueSize; i++) {
+                if (d->queue[i].trackNumber == 1) {
+                    nextIdx = i;
+                    break;
+                }
+            }
+        }
+
+        if (nextIdx >= 0 && d->queue[nextIdx].title.length() > 0) {
+            String nextTitle = d->queue[nextIdx].title;
+            if (nextTitle != last_next_title) {
+                lv_label_set_text(lbl_next_title, d->queue[nextIdx].title.c_str());
+                lv_label_set_text(lbl_next_artist, d->queue[nextIdx].artist.c_str());
+                lv_obj_clear_flag(lbl_next_header, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(lbl_next_title, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(lbl_next_artist, LV_OBJ_FLAG_HIDDEN);
+                last_next_title = nextTitle;
+            }
+        } else if (nextIdx < 0) {
+            // Only hide if next track is truly unavailable (not just temporarily)
+            if (last_next_title != "") {
+                lv_obj_add_flag(lbl_next_header, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(lbl_next_title, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(lbl_next_artist, LV_OBJ_FLAG_HIDDEN);
+                last_next_title = "";
+            }
+        }
+    } else {
+        if (last_next_title != "") {
+            lv_obj_add_flag(lbl_next_header, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(lbl_next_title, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(lbl_next_artist, LV_OBJ_FLAG_HIDDEN);
+            last_next_title = "";
+        }
+    }
+}
+
+// Selects the correct art URL and calls requestAlbumArt() when needed.
+// Also handles URI change detection and "not playing" transitions.
+static void updateAlbumArtRequest(SonosDevice* d) {
+    static String last_track_uri = "";
+    static String last_source_prefix = "";
+    static bool had_track = false;
+
+    // Extract source prefix to detect actual source changes (not just track changes)
+    String current_source_prefix = "";
+    if (d->currentURI.startsWith("x-sonos-vli:")) {
+        current_source_prefix = "x-sonos-vli";  // Spotify, Apple Music, etc
+    } else if (d->currentURI.startsWith("hls-radio://")) {
+        current_source_prefix = "hls-radio";  // Radio
+    } else if (d->currentURI.startsWith("x-sonos-http:")) {
+        current_source_prefix = "x-sonos-http";  // Radio
+    } else if (d->currentURI.startsWith("x-rincon-mp3radio:")) {
+        current_source_prefix = "x-rincon-mp3radio";  // Radio
+    } else {
+        // Extract first part before colon for unknown sources
+        int colonPos = d->currentURI.indexOf(':');
+        if (colonPos > 0) {
+            current_source_prefix = d->currentURI.substring(0, colonPos);
+        }
+    }
+
+    // Detect ACTUAL source changes (Spotify→Radio, not Spotify track1→track2)
+    bool actual_source_change = (current_source_prefix != last_source_prefix && current_source_prefix.length() > 0);
+
+    // Detect any URI change (track or source)
+    bool uri_changed = (d->currentURI != last_track_uri);
+
+    if (uri_changed) {
+        // Always update last_track_uri (even when empty) to prevent repeated firing
+        // when Sonos reports empty URI in stopped state
+        last_track_uri = d->currentURI;
+
+        if (d->currentURI.length() > 0) {
+            if (actual_source_change) {
+                Serial.printf("[ART] SOURCE CHANGE: %s -> %s\n", last_source_prefix.c_str(), current_source_prefix.c_str());
+                last_source_prefix = current_source_prefix;
+            } else {
+                Serial.printf("[ART] Track changed (same source: %s)\n", current_source_prefix.c_str());
+            }
+            // CRITICAL: Abort any in-progress album art download immediately
+            // Applies to ALL track changes (not just source changes) so the art task
+            // doesn't wait for a 10-second HTTP timeout before processing the new track
+            art_abort_download = true;
+            // CRITICAL: Must hold art_mutex when writing last_art_url/pending_art_url -
+            // the art task reads both under mutex, and String assignment is not atomic.
+            if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(50))) {
+                last_art_url    = "";  // Force art refresh on any URI change
+                pending_art_url = "";  // Prevent art task downloading old song's art during
+                                       // the window between URI detection and requestAlbumArt()
+                                       // call ~100 lines below. Without this, art task wakes,
+                                       // sees pending=old_url != last_art_url="" and starts
+                                       // downloading wrong art, wasting SDIO traffic and setting
+                                       // last_art_download_end_ms (adding 1s cooldown for new art).
+                art_ready = false;  // Discard any just-completed download — prevents old art
+                                    // flashing for the new track if displayCompletedArt() fires
+                                    // before the new art task iteration starts.
+                xSemaphoreGive(art_mutex);
+            }
+            // Clear LRU cache: prevents cached art from the OLD track flashing for
+            // the NEW track if the art task picks up the new URL within the same
+            // updateUI frame (cache hit would bypass the placeholder entirely).
+            clearAlbumArtCache();
+            // Show placeholder immediately (main thread = LVGL-safe)
+            if (img_album)       lv_obj_add_flag(img_album, LV_OBJ_FLAG_HIDDEN);
+            if (art_placeholder) lv_obj_remove_flag(art_placeholder, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    // Show placeholder when device transitions to "Not Playing" (no active track)
+    // Without this, the last track's art stays frozen when playback stops
+    bool has_track = (d->currentTrack.length() > 0);
+    if (had_track && !has_track) {
+        Serial.println("[ART] Not playing - clearing art display");
+        art_abort_download = true;  // Stop any in-progress download immediately
+        clearAlbumArtCache();
+        if (img_album) lv_obj_add_flag(img_album, LV_OBJ_FLAG_HIDDEN);
+        if (art_placeholder) lv_obj_remove_flag(art_placeholder, LV_OBJ_FLAG_HIDDEN);
+        if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(50))) {
+            last_art_url = "";
+            pending_art_url = "";  // Prevent art task re-fetching the old URL
+            art_ready = false;     // Discard any just-completed download (prevents art flash)
+            xSemaphoreGive(art_mutex);
+        }
+    }
+    had_track = has_track;
+
+    // Request album art if URL provided and (URL changed or track changed)
+    // Compare against last_requested_art_url (HTTPS, same type as d->albumArtURL) NOT pending_art_url.
+    // The art task converts pending_art_url to HTTP internally — comparing HTTPS vs HTTP always
+    // returns "changed", calling requestAlbumArt() every frame and keeping art_download_in_progress=true
+    // permanently (blocking the clock screensaver and spamming last_track_change_ms).
+    static String last_requested_art_url = "";
+    bool hasArt = (d->albumArtURL.length() > 0) || (d->isRadioStation && d->radioStationArtURL.length() > 0);
+    bool artChanged = uri_changed || (d->albumArtURL.length() > 0 && d->albumArtURL != last_requested_art_url);
+
+    // For radio stations: also check if radioStationArtURL changed (even if albumArtURL is empty)
+    if (d->isRadioStation && d->radioStationArtURL.length() > 0 && d->radioStationArtURL != last_requested_art_url) {
+        artChanged = true;
+    }
+
+    if (!hasArt && uri_changed) {
+        // Track changed but has NO art URL — clear old art and show placeholder immediately
+        // (Without this, the old track's art stays on screen forever)
+        Serial.println("[ART] No art URL for this track - showing placeholder");
+        if (img_album) lv_obj_add_flag(img_album, LV_OBJ_FLAG_HIDDEN);
+        if (art_placeholder) lv_obj_remove_flag(art_placeholder, LV_OBJ_FLAG_HIDDEN);
+        if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(50))) {
+            last_art_url = "";
+            pending_art_url = "";  // Prevent art task re-fetching the old URL
+            art_ready = false;     // Discard any just-completed download (prevents art flash)
+            xSemaphoreGive(art_mutex);
+        }
+    } else if (hasArt && artChanged) {
+        String artURL = "";
+        bool usingStationLogo = false;  // Track if we're using station logo (PNG allowed)
+
+        // Determine which art to use
+        if (d->albumArtURL.length() > 0) {
+            artURL = d->albumArtURL;
+        }
+
+        // RADIO STATION LOGO FALLBACK:
+        // If playing radio and no song art available, use station logo instead
+        if (d->isRadioStation) {
+            bool hasSongArt = (artURL.length() > 0);
+            bool hasStationLogo = (d->radioStationArtURL.length() > 0);
+            Serial.printf("[ART] Radio check - hasSongArt=%d, hasStationLogo=%d, artURL='%s', stationURL='%s'\n",
+                         hasSongArt, hasStationLogo, artURL.c_str(), d->radioStationArtURL.c_str());
+
+            // If no song art but have station logo, use the logo
+            if (!hasSongArt && hasStationLogo) {
+                artURL = d->radioStationArtURL;
+                usingStationLogo = true;
+                Serial.println("[ART] Radio: Using station logo (no song art)");
+            }
+            // If song art is just a generic Sonos radio icon, prefer the actual station logo
+            else if (hasSongArt && hasStationLogo && artURL.indexOf("/getaa?") > 0) {
+                // Check if it's pointing to the radio URI (generic icon)
+                if (artURL.indexOf("x-sonosapi-stream") > 0 ||
+                    artURL.indexOf("x-rincon-mp3radio") > 0 ||
+                    artURL.indexOf("x-sonosapi-radio") > 0 ||
+                    artURL.indexOf("x-sonosapi-hls") > 0) {
+                    artURL = d->radioStationArtURL;
+                    usingStationLogo = true;
+                    Serial.println("[ART] Radio: Using station logo (replacing generic icon)");
+                }
+            }
+        }
+
+        // Set the flag for album art task to know if PNG is allowed
+        pending_is_station_logo = usingStationLogo;
+
+        if (artURL.length() > 0) {
+            // Note: Using ESP32-P4 hardware JPEG decoder - can handle full 640x640 Spotify images!
+
+            // Apple Music: reduce image size to avoid "too large" errors (1400x1400 can be 500KB+)
+            if (artURL.indexOf("mzstatic.com") > 0) {
+                if (artURL.indexOf("/1400x1400bb.jpg") > 0) {
+                    artURL.replace("/1400x1400bb.jpg", "/400x400bb.jpg");
+                    Serial.println("[ART] Apple Music - reduced to 400x400");
+                } else if (artURL.indexOf("/1080x1080cc.jpg") > 0) {
+                    artURL.replace("/1080x1080cc.jpg", "/400x400cc.jpg");
+                    Serial.println("[ART] Apple Music - reduced to 400x400");
+                }
+            }
+
+            requestAlbumArt(artURL);
+            last_requested_art_url = artURL;  // track HTTPS URL; prevents HTTPS!=HTTP false-positive on next frame
+        } else {
+            // No art available - clear display
+            Serial.println("[ART] No art URL - clearing display");
+            if (img_album) lv_obj_add_flag(img_album, LV_OBJ_FLAG_HIDDEN);
+            if (art_placeholder) lv_obj_remove_flag(art_placeholder, LV_OBJ_FLAG_HIDDEN);
+            // CRITICAL: Must hold art_mutex when writing last_art_url (not atomic)
+            if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(50))) {
+                last_art_url = "";  // Clear to allow next art request
+                xSemaphoreGive(art_mutex);
+            }
+        }
+    }
+}
+
+// ============================================================================
+// UI Update Function
+// ============================================================================
+void updateUI() {
+    SonosDevice* d = sonos.getCurrentDevice();
+    if (!d) return;
+
+    if (!updateConnectionState(d)) return;
 
     // Device is connected - update UI normally
 
@@ -1461,10 +1736,19 @@ void updateUI() {
     static String lyrics_last_track = "";
     String lyrics_key = d->currentArtist + "|" + d->currentTrack;
     if (lyrics_key != lyrics_last_track && d->currentTrack.length() > 0) {
-        lyrics_last_track = lyrics_key;
+        last_track_change_ms = millis();
         if (lyrics_enabled && !d->isRadioStation) {
-            requestLyrics(d->currentArtist, d->currentTrack, d->durationSeconds);
+            // requestLyrics() returns false if the previous task is still running
+            // (e.g. blocked inside http.GET() with up to 10s timeout). In that case
+            // we do NOT update lyrics_last_track — the condition fires again next
+            // frame until the old task exits and requestLyrics() can safely spawn.
+            // This prevents TCB/stack reuse while the old task is alive, which would
+            // permanently leak ~32KB of TLS DMA buffers per rapid track change.
+            if (requestLyrics(d->currentArtist, d->currentTrack, d->durationSeconds)) {
+                lyrics_last_track = lyrics_key;
+            }
         } else {
+            lyrics_last_track = lyrics_key;
             clearLyrics();
         }
     }
@@ -1543,55 +1827,7 @@ void updateUI() {
 
     // Next track info - find next track in queue
     // SKIP FOR RADIO MODE - radio stations don't have a queue/next track
-    static String last_next_title = "";
-    if (!d->isRadioStation && d->queueSize > 0 && d->currentTrackNumber > 0) {
-        int nextIdx = -1;
-
-        // Find next track after current
-        for (int i = 0; i < d->queueSize; i++) {
-            if (d->queue[i].trackNumber == d->currentTrackNumber + 1) {
-                nextIdx = i;
-                break;
-            }
-        }
-
-        // If we're on last track and repeat is on, show first track
-        if (nextIdx < 0 && (d->repeatMode == "ALL" || d->repeatMode == "ONE")) {
-            for (int i = 0; i < d->queueSize; i++) {
-                if (d->queue[i].trackNumber == 1) {
-                    nextIdx = i;
-                    break;
-                }
-            }
-        }
-
-        if (nextIdx >= 0 && d->queue[nextIdx].title.length() > 0) {
-            String nextTitle = d->queue[nextIdx].title;
-            if (nextTitle != last_next_title) {
-                lv_label_set_text(lbl_next_title, d->queue[nextIdx].title.c_str());
-                lv_label_set_text(lbl_next_artist, d->queue[nextIdx].artist.c_str());
-                lv_obj_clear_flag(lbl_next_header, LV_OBJ_FLAG_HIDDEN);
-                lv_obj_clear_flag(lbl_next_title, LV_OBJ_FLAG_HIDDEN);
-                lv_obj_clear_flag(lbl_next_artist, LV_OBJ_FLAG_HIDDEN);
-                last_next_title = nextTitle;
-            }
-        } else if (nextIdx < 0) {
-            // Only hide if next track is truly unavailable (not just temporarily)
-            if (last_next_title != "") {
-                lv_obj_add_flag(lbl_next_header, LV_OBJ_FLAG_HIDDEN);
-                lv_obj_add_flag(lbl_next_title, LV_OBJ_FLAG_HIDDEN);
-                lv_obj_add_flag(lbl_next_artist, LV_OBJ_FLAG_HIDDEN);
-                last_next_title = "";
-            }
-        }
-    } else {
-        if (last_next_title != "") {
-            lv_obj_add_flag(lbl_next_header, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(lbl_next_title, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(lbl_next_artist, LV_OBJ_FLAG_HIDDEN);
-            last_next_title = "";
-        }
-    }
+    updateNextTrackUI(d);
 
     // Repeat
     if (d->repeatMode != ui_repeat) {
@@ -1611,202 +1847,8 @@ void updateUI() {
 
     // Album art - only request if URL changed to prevent download loops
     // NOTE: last_art_url is GLOBAL (extern in ui_common.h), don't shadow it!
-    static String last_track_uri = "";
-    static String last_source_prefix = "";
-
-    // Extract source prefix to detect actual source changes (not just track changes)
-    String current_source_prefix = "";
-    if (d->currentURI.startsWith("x-sonos-vli:")) {
-        current_source_prefix = "x-sonos-vli";  // Spotify, Apple Music, etc
-    } else if (d->currentURI.startsWith("hls-radio://")) {
-        current_source_prefix = "hls-radio";  // Radio
-    } else if (d->currentURI.startsWith("x-sonos-http:")) {
-        current_source_prefix = "x-sonos-http";  // Radio
-    } else if (d->currentURI.startsWith("x-rincon-mp3radio:")) {
-        current_source_prefix = "x-rincon-mp3radio";  // Radio
-    } else {
-        // Extract first part before colon for unknown sources
-        int colonPos = d->currentURI.indexOf(':');
-        if (colonPos > 0) {
-            current_source_prefix = d->currentURI.substring(0, colonPos);
-        }
-    }
-
-    // Detect ACTUAL source changes (Spotify→Radio, not Spotify track1→track2)
-    bool actual_source_change = (current_source_prefix != last_source_prefix && current_source_prefix.length() > 0);
-
-    // Detect any URI change (track or source)
-    bool uri_changed = (d->currentURI != last_track_uri);
-
-    if (uri_changed) {
-        // Always update last_track_uri (even when empty) to prevent repeated firing
-        // when Sonos reports empty URI in stopped state
-        last_track_uri = d->currentURI;
-
-        if (d->currentURI.length() > 0) {
-            if (actual_source_change) {
-                Serial.printf("[ART] SOURCE CHANGE: %s -> %s\n", last_source_prefix.c_str(), current_source_prefix.c_str());
-                last_source_prefix = current_source_prefix;
-            } else {
-                Serial.printf("[ART] Track changed (same source: %s)\n", current_source_prefix.c_str());
-            }
-            if (!art_suppress_source_change) {
-                // CRITICAL: Abort any in-progress album art download immediately
-                // Applies to ALL track changes (not just source changes) so the art task
-                // doesn't wait for a 10-second HTTP timeout before processing the new track
-                art_abort_download = true;
-                // CRITICAL: Must hold art_mutex when writing last_art_url - the art task reads
-                // it under mutex, and String assignment is not atomic (race condition → corruption)
-                if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(50))) {
-                    last_art_url = "";  // Force art refresh on any URI change
-                    xSemaphoreGive(art_mutex);
-                }
-            } else {
-                Serial.printf("[ART] Suppressed (queue-select in progress)\n");
-            }
-        }
-    }
-
-    // Show placeholder when device transitions to "Not Playing" (no active track)
-    // Without this, the last track's art stays frozen when playback stops
-    static bool had_track = false;
-    bool has_track = (d->currentTrack.length() > 0);
-    if (had_track && !has_track) {
-        Serial.println("[ART] Not playing - clearing art display");
-        art_abort_download = true;  // Stop any in-progress download immediately
-        if (img_album) lv_obj_add_flag(img_album, LV_OBJ_FLAG_HIDDEN);
-        if (art_placeholder) lv_obj_remove_flag(art_placeholder, LV_OBJ_FLAG_HIDDEN);
-        if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(50))) {
-            last_art_url = "";
-            pending_art_url = "";  // Prevent art task re-fetching the old URL
-            art_ready = false;     // Discard any just-completed download (prevents art flash)
-            xSemaphoreGive(art_mutex);
-        }
-    }
-    had_track = has_track;
-
-    // Request album art if URL provided and (URL changed or track changed)
-    // Note: Don't compare against last_art_url (HTTP) since d->albumArtURL is HTTPS
-    // Let art task handle deduplication after HTTP conversion
-    // For radio: also check radioStationArtURL if albumArtURL is empty
-    bool hasArt = (d->albumArtURL.length() > 0) || (d->isRadioStation && d->radioStationArtURL.length() > 0);
-    bool artChanged = (d->albumArtURL != pending_art_url) || uri_changed;
-
-    // For radio stations: also check if radioStationArtURL changed (even if albumArtURL is empty)
-    if (d->isRadioStation && d->radioStationArtURL.length() > 0 && d->radioStationArtURL != pending_art_url) {
-        artChanged = true;
-    }
-
-    if (!hasArt && uri_changed && !art_suppress_source_change) {
-        // Track changed but has NO art URL — clear old art and show placeholder immediately
-        // (Without this, the old track's art stays on screen forever)
-        Serial.println("[ART] No art URL for this track - showing placeholder");
-        if (img_album) lv_obj_add_flag(img_album, LV_OBJ_FLAG_HIDDEN);
-        if (art_placeholder) lv_obj_remove_flag(art_placeholder, LV_OBJ_FLAG_HIDDEN);
-        if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(50))) {
-            last_art_url = "";
-            pending_art_url = "";  // Prevent art task re-fetching the old URL
-            art_ready = false;     // Discard any just-completed download (prevents art flash)
-            xSemaphoreGive(art_mutex);
-        }
-    } else if (hasArt && artChanged && !art_suppress_source_change) {
-        String artURL = "";
-        bool usingStationLogo = false;  // Track if we're using station logo (PNG allowed)
-
-        // Determine which art to use
-        if (d->albumArtURL.length() > 0) {
-            artURL = d->albumArtURL;
-        }
-
-        // RADIO STATION LOGO FALLBACK:
-        // If playing radio and no song art available, use station logo instead
-        if (d->isRadioStation) {
-            bool hasSongArt = (artURL.length() > 0);
-            bool hasStationLogo = (d->radioStationArtURL.length() > 0);
-            Serial.printf("[ART] Radio check - hasSongArt=%d, hasStationLogo=%d, artURL='%s', stationURL='%s'\n",
-                         hasSongArt, hasStationLogo, artURL.c_str(), d->radioStationArtURL.c_str());
-
-            // If no song art but have station logo, use the logo
-            if (!hasSongArt && hasStationLogo) {
-                artURL = d->radioStationArtURL;
-                usingStationLogo = true;
-                Serial.println("[ART] Radio: Using station logo (no song art)");
-            }
-            // If song art is just a generic Sonos radio icon, prefer the actual station logo
-            else if (hasSongArt && hasStationLogo && artURL.indexOf("/getaa?") > 0) {
-                // Check if it's pointing to the radio URI (generic icon)
-                if (artURL.indexOf("x-sonosapi-stream") > 0 ||
-                    artURL.indexOf("x-rincon-mp3radio") > 0 ||
-                    artURL.indexOf("x-sonosapi-radio") > 0 ||
-                    artURL.indexOf("x-sonosapi-hls") > 0) {
-                    artURL = d->radioStationArtURL;
-                    usingStationLogo = true;
-                    Serial.println("[ART] Radio: Using station logo (replacing generic icon)");
-                }
-            }
-        }
-
-        // Set the flag for album art task to know if PNG is allowed
-        pending_is_station_logo = usingStationLogo;
-
-        if (artURL.length() > 0) {
-            // Note: Using ESP32-P4 hardware JPEG decoder - can handle full 640x640 Spotify images!
-
-            // Apple Music: reduce image size to avoid "too large" errors (1400x1400 can be 500KB+)
-            if (artURL.indexOf("mzstatic.com") > 0) {
-                if (artURL.indexOf("/1400x1400bb.jpg") > 0) {
-                    artURL.replace("/1400x1400bb.jpg", "/400x400bb.jpg");
-                    Serial.println("[ART] Apple Music - reduced to 400x400");
-                } else if (artURL.indexOf("/1080x1080cc.jpg") > 0) {
-                    artURL.replace("/1080x1080cc.jpg", "/400x400cc.jpg");
-                    Serial.println("[ART] Apple Music - reduced to 400x400");
-                }
-            }
-
-            requestAlbumArt(artURL);
-            // Don't set last_art_url here - let art task manage it (HTTP vs HTTPS conversion)
-        } else {
-            // No art available - clear display
-            Serial.println("[ART] No art URL - clearing display");
-            if (img_album) lv_obj_add_flag(img_album, LV_OBJ_FLAG_HIDDEN);
-            if (art_placeholder) lv_obj_remove_flag(art_placeholder, LV_OBJ_FLAG_HIDDEN);
-            // CRITICAL: Must hold art_mutex when writing last_art_url (not atomic)
-            if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(50))) {
-                last_art_url = "";  // Clear to allow next art request
-                xSemaphoreGive(art_mutex);
-            }
-        }
-    }
-    if (xSemaphoreTake(art_mutex, 0)) {
-        if (art_ready) {
-            // Build art_dsc here on the main thread — same thread as lv_timer_handler() /
-            // LVGL renderer — so there is never concurrent read+write of the descriptor.
-            // The background art task only writes art_buffer (pixels); we set the header here.
-            memset(&art_dsc, 0, sizeof(art_dsc));
-            art_dsc.header.w    = ART_SIZE;
-            art_dsc.header.h    = ART_SIZE;
-            art_dsc.header.cf   = LV_COLOR_FORMAT_RGB565;
-            art_dsc.data_size   = ART_SIZE * ART_SIZE * 2;
-            art_dsc.data        = (const uint8_t*)art_buffer;
-            lv_img_set_src(img_album, &art_dsc);
-            lv_obj_set_size(img_album, ART_SIZE, ART_SIZE);  // Re-enforce after LVGL v9 auto-resize
-            lv_obj_center(img_album);
-            lv_obj_remove_flag(img_album, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(art_placeholder, LV_OBJ_FLAG_HIDDEN);
-            art_ready = false;
-            art_show_placeholder = false;
-        } else if (art_show_placeholder) {
-            // Art permanently failed - hide old art, show placeholder
-            lv_obj_add_flag(img_album, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_remove_flag(art_placeholder, LV_OBJ_FLAG_HIDDEN);
-            art_show_placeholder = false;
-        }
-        if (color_ready && panel_art && panel_right) {
-            setBackgroundColor(dominant_color);
-            color_ready = false;
-        }
-        xSemaphoreGive(art_mutex);
-    }
+    updateAlbumArtRequest(d);
+    displayCompletedArt();
 
     // Radio mode UI adaptation - must be at the END of updateUI()
     updateRadioModeUI();
@@ -1816,6 +1858,13 @@ void processUpdates() {
     static uint32_t lastUpdate = 0;
     UIUpdate_t upd;
     bool need = false;
-    while (xQueueReceive(sonos.getUIUpdateQueue(), &upd, 0)) need = true;
+    bool queue_updated = false;
+    while (xQueueReceive(sonos.getUIUpdateQueue(), &upd, 0)) {
+        need = true;
+        if (upd.type == UPDATE_QUEUE) queue_updated = true;
+    }
     if (need && (millis() - lastUpdate > 200)) { updateUI(); lastUpdate = millis(); }
+    else displayCompletedArt();  // Run even without Sonos events (e.g. art ready while polling suppressed)
+    // Auto-refresh queue list if the queue screen is visible when new data arrives
+    if (queue_updated && lv_screen_active() == scr_queue) refreshQueueList();
 }

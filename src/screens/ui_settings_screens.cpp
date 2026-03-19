@@ -5,6 +5,7 @@
  */
 
 #include "ui_common.h"
+#include "config.h"
 
 // Forward declaration for sidebar (now in ui_sidebar.cpp)
 lv_obj_t* createSettingsSidebar(lv_obj_t* screen, int activeIdx);
@@ -17,11 +18,21 @@ void refreshQueueList() {
     SonosDevice* d = sonos.getCurrentDevice();
     if (!d) { lv_label_set_text(lbl_queue_status, "No device"); return; }
     if (d->queueSize == 0) { lv_label_set_text(lbl_queue_status, "Queue is empty"); return; }
-    lv_label_set_text_fmt(lbl_queue_status, "%d %s in queue", d->queueSize, d->queueSize == 1 ? "track" : "tracks");
+
+    // Show window range when we have a partial view, e.g. "Tracks 4–13 of 47"
+    int firstTrack = d->queue[0].trackNumber;
+    int lastTrack  = d->queue[d->queueSize - 1].trackNumber;
+    if (d->totalTracks > 0 && d->queueSize < d->totalTracks) {
+        lv_label_set_text_fmt(lbl_queue_status, "Tracks %d-%d of %d",
+                              firstTrack, lastTrack, d->totalTracks);
+    } else {
+        lv_label_set_text_fmt(lbl_queue_status, "%d %s",
+                              d->queueSize, d->queueSize == 1 ? "track" : "tracks");
+    }
 
     for (int i = 0; i < d->queueSize; i++) {
         QueueItem* item = &d->queue[i];
-        int trackNum = i + 1;
+        int trackNum = item->trackNumber;  // absolute 1-based position in the full queue
         bool isPlaying = (trackNum == d->currentTrackNumber);
 
         lv_obj_t* btn = lv_btn_create(list_queue);
@@ -104,10 +115,20 @@ void createQueueScreen() {
     lv_obj_set_style_bg_color(btn_refresh, lv_color_hex(0x333333), 0);
     lv_obj_set_style_radius(btn_refresh, 25, 0);
     lv_obj_set_style_shadow_width(btn_refresh, 0, 0);
-    // DO NOT call sonos.updateQueue() here — this runs on mainAppTask (UI thread), which has no
-    // SDIO cooldown protection. Fires a 20KB SOAP response with no mutex/cooldown → SDIO crash.
-    // requestQueueUpdate() enqueues CMD_UPDATE_QUEUE → runs in the network task safely.
-    lv_obj_add_event_cb(btn_refresh, [](lv_event_t* e) { sonos.requestQueueUpdate(); }, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn_refresh, [](lv_event_t* e) {
+        // Request a windowed fetch from the polling task (safe: no SOAP on UI thread).
+        SonosDevice* d = sonos.getCurrentDevice();
+        int start = 0;
+        if (d && d->currentTrackNumber > 0) {
+            start = d->currentTrackNumber - SONOS_QUEUE_BATCH_SIZE / 2;
+            if (start < 0) start = 0;
+            if (d->totalTracks > 0 && start + SONOS_QUEUE_BATCH_SIZE > d->totalTracks)
+                start = d->totalTracks - SONOS_QUEUE_BATCH_SIZE;
+            if (start < 0) start = 0;
+        }
+        queue_fetch_start_index = start;
+        queue_fetch_requested   = true;
+    }, LV_EVENT_CLICKED, NULL);
     lv_obj_t* ico_refresh = lv_label_create(btn_refresh);
     lv_label_set_text(ico_refresh, LV_SYMBOL_REFRESH);
     lv_obj_set_style_text_color(ico_refresh, lv_color_hex(0xFFFFFF), 0);

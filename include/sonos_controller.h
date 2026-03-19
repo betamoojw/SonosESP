@@ -126,8 +126,12 @@ private:
     SemaphoreHandle_t deviceMutex;
     QueueHandle_t commandQueue;
     QueueHandle_t uiUpdateQueue;
-    TaskHandle_t networkTaskHandle;
-    TaskHandle_t pollingTaskHandle;
+    TaskHandle_t  networkTaskHandle;
+    TaskHandle_t  pollingTaskHandle;
+    StaticTask_t  networkTaskTCB;           // TCB in internal SRAM (~88 bytes)
+    StaticTask_t  pollingTaskTCB;           // TCB in internal SRAM (~88 bytes)
+    StackType_t*  networkTaskStack = nullptr;  // Stack in PSRAM — allocated once in startTasks()
+    StackType_t*  pollingTaskStack = nullptr;  // Stack in PSRAM — allocated once in startTasks()
     
     // Internal methods
     String sendSOAP(const char* service, const char* action, const char* args);
@@ -197,7 +201,7 @@ public:
     bool updateMediaInfo();          // Get station name for radio from GetMediaInfo
     bool updatePlaybackState();
     bool updateVolume();
-    bool updateQueue();
+    bool updateQueue(int startIndex = 0);  // startIndex: 0-based SOAP StartingIndex for windowed fetch
     bool updateTransportSettings();
     
     // Queue access

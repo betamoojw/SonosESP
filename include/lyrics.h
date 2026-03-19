@@ -25,8 +25,10 @@ extern int current_lyric_index;
 // Initialize lyrics system (allocates PSRAM buffer)
 void initLyrics();
 
-// Request lyrics for a track (spawns background fetch task)
-void requestLyrics(const String& artist, const String& title, int durationSec);
+// Request lyrics for a track (spawns background fetch task).
+// Returns true if a new task was spawned, false if the previous task is still
+// running (caller should NOT update lyrics_last_track — retry next frame).
+bool requestLyrics(const String& artist, const String& title, int durationSec);
 
 // Clear lyrics and hide overlay
 void clearLyrics();

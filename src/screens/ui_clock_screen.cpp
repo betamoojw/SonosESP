@@ -13,6 +13,7 @@
 
 #include "ui_common.h"
 #include "config.h"
+#include "ui_network_guard.h"
 #include "clock_screen.h"
 
 LV_FONT_DECLARE(lv_font_montserrat_140);
@@ -246,11 +247,7 @@ static void fetchClockWeather() {
             lon = clock_auto_lon;
         } else {
             // First fetch this session — call ip-api.com (plain HTTP, no TLS)
-            while (!clock_bg_shutdown_requested) {
-                if (millis() - last_network_end_ms >= 200) break;
-                vTaskDelay(pdMS_TO_TICKS(50));
-            }
-            if (clock_bg_shutdown_requested) return;
+            if (!sdioPreWait("CLKWX", 0, &clock_bg_shutdown_requested)) return;
 
             if (xSemaphoreTake(network_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
                 Serial.println("[CLKWX] No mutex for IP-locate");
@@ -317,12 +314,8 @@ static void fetchClockWeather() {
         lat, lon, clock_wx_fahrenheit ? "fahrenheit" : "celsius");
 
     for (int attempt = 1; attempt <= 2 && !clock_bg_shutdown_requested; attempt++) {
-        // HTTPS cooldown
-        while (!clock_bg_shutdown_requested) {
-            if (millis() - last_https_end_ms >= 2000) break;
-            vTaskDelay(pdMS_TO_TICKS(50));
-        }
-        if (clock_bg_shutdown_requested) return;
+        // SDIO crash-defence: general + HTTPS cooldowns before Open-Meteo HTTPS.
+        if (!sdioPreWait("CLKWX", 0, &clock_bg_shutdown_requested)) return;
 
         if (xSemaphoreTake(network_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
             Serial.println("[CLKWX] No mutex for Open-Meteo");
@@ -444,12 +437,8 @@ void clockBgTask(void* /*param*/) {
 
             for (int attempt = 1; attempt <= MAX_ATTEMPTS && dl_total == 0 && !clock_bg_shutdown_requested; attempt++) {
 
-                // General network cooldown (HTTP — no TLS overhead)
-                while (!clock_bg_shutdown_requested) {
-                    if (millis() - last_network_end_ms >= 200) break;
-                    vTaskDelay(pdMS_TO_TICKS(50));
-                }
-                if (clock_bg_shutdown_requested) break;
+                // SDIO crash-defence: general + HTTPS cooldowns before BG photo download.
+                if (!sdioPreWait("CLKBG", 0, &clock_bg_shutdown_requested)) break;
 
                 if (xSemaphoreTake(network_mutex, pdMS_TO_TICKS(8000)) != pdTRUE) {
                     Serial.printf("[CLKBG] No mutex (attempt %d)\n", attempt);
@@ -523,7 +512,8 @@ void clockBgTask(void* /*param*/) {
                         photo_http.end();
                         photo_client.stop();
                     }
-                    last_network_end_ms = millis();
+                    last_network_end_ms      = millis();
+                    last_art_download_end_ms = millis();  // gate art/lyrics inter-download cooldowns
                 }
 
                 xSemaphoreGive(network_mutex);
@@ -806,6 +796,30 @@ void checkClockTrigger() {
 
         // ------------------------------------------------------------------
         case CLOCK_IDLE: {
+            // Periodic debug: log which condition is blocking (once per 30s)
+            {
+                static uint32_t last_dbg_ms = 0;
+                if (millis() - last_dbg_ms >= 30000) {
+                    last_dbg_ms = millis();
+                    uint32_t inact_ms  = (uint32_t)clock_timeout_min * 60000UL;
+                    uint32_t since_exit  = millis() - last_clock_exit_ms;
+                    uint32_t since_touch = millis() - last_touch_time;
+                    uint32_t since_trk   = last_track_change_ms ? millis() - last_track_change_ms : 999999;
+                    bool trig = (clock_mode == CLOCK_MODE_INACTIVITY) ? true
+                              : (clock_mode == CLOCK_MODE_PAUSED)     ? !ui_playing
+                              : (clock_mode == CLOCK_MODE_NOTHING)    ? (!ui_playing && ui_title.isEmpty())
+                              : false;
+                    Serial.printf("[CLOCK DBG] mode=%d timeout=%dmin | exit_ok=%d(+%lus) disabled=%d inact_ok=%d(%lu/%lus) trig=%d settle_ok=%d(+%lus) playing=%d art_dl=%d title='%s'\n",
+                        clock_mode, clock_timeout_min,
+                        (since_exit >= CLOCK_EXIT_COOLDOWN_MS),  since_exit/1000,
+                        (clock_mode == CLOCK_MODE_DISABLED),
+                        (since_touch >= inact_ms),               since_touch/1000, inact_ms/1000,
+                        trig,
+                        (since_trk >= SDIO_TRACK_CHANGE_SETTLE_MS), since_trk/1000,
+                        ui_playing, (int)art_download_in_progress, ui_title.c_str());
+                }
+            }
+
             // Not re-triggering soon after a manual dismiss
             if (millis() - last_clock_exit_ms < CLOCK_EXIT_COOLDOWN_MS) return;
             if (clock_mode == CLOCK_MODE_DISABLED) return;
@@ -813,11 +827,34 @@ void checkClockTrigger() {
             uint32_t inactivity_ms = (uint32_t)clock_timeout_min * 60000UL;
             if (millis() - last_touch_time < inactivity_ms) return;
 
+            // Track how long ui_playing has been continuously false.
+            // PAUSED/NOTHING modes debounce for 2s to ignore the brief isPlaying=false
+            // (~300-500ms) that Sonos reports during HLS track transitions.
+            static bool   s_was_not_playing   = false;
+            static uint32_t s_not_playing_since = 0;
+            if (!ui_playing) {
+                if (!s_was_not_playing) {
+                    s_was_not_playing   = true;
+                    s_not_playing_since = millis();
+                }
+            } else {
+                s_was_not_playing   = false;
+                s_not_playing_since = 0;
+            }
+            uint32_t not_playing_ms = s_was_not_playing ? millis() - s_not_playing_since : 0;
+
+            // "paused and stable" = not-playing for 2s AND no art download in progress.
+            // art_download_in_progress is true during every HLS track transition (set by
+            // requestAlbumArt() on track change, cleared only after the art cycle completes).
+            // This prevents the screensaver firing mid-transition when ui_playing is
+            // briefly false but music is about to resume on the new track.
+            bool paused_and_stable = (not_playing_ms >= 2000) && !art_download_in_progress;
+
             bool trigger = false;
             switch (clock_mode) {
-                case CLOCK_MODE_INACTIVITY: trigger = true;                               break;
-                case CLOCK_MODE_PAUSED:     trigger = !ui_playing;                        break;
-                case CLOCK_MODE_NOTHING:    trigger = !ui_playing && ui_title.isEmpty();  break;
+                case CLOCK_MODE_INACTIVITY: trigger = true;                                           break;
+                case CLOCK_MODE_PAUSED:     trigger = paused_and_stable;                              break;
+                case CLOCK_MODE_NOTHING:    trigger = paused_and_stable && ui_title.isEmpty();        break;
             }
             if (!trigger) return;
 

@@ -6,8 +6,9 @@
 #include "lyrics.h"
 #include "ui_common.h"
 #include "config.h"
-#include <WiFiClientSecure.h>
+#include "ui_network_guard.h"
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
 
@@ -169,51 +170,37 @@ static void lyricsTaskFunc(void* param) {
     // No self-spawn: loops internally so the single PSRAM stack is reused safely.
     while (true) {
         // PRE-WAIT cooldowns outside mutex so SOAP commands aren't blocked
+
+        // Wait for art download to finish before HTTP fetch (concurrent art + lyrics overflows pkt_rxbuff)
         {
-            unsigned long now = millis();
-            unsigned long elapsed = now - last_network_end_ms;
-            if (last_network_end_ms > 0 && elapsed < 200)
-                vTaskDelay(pdMS_TO_TICKS(200 - elapsed));
-            now = millis();
-            elapsed = now - last_https_end_ms;
-            if (last_https_end_ms > 0 && elapsed < 2000) {
-                unsigned long wait_ms = 2000 - elapsed;
-                Serial.printf("[LYRICS] HTTPS cooldown: waiting %lums\n", wait_ms);
-                vTaskDelay(pdMS_TO_TICKS(wait_ms));
+            unsigned long _now = millis();
+            Serial.printf("[LYRICS] PRE: art_dl=%d 500=%ldms net=%ldms art_end=%ldms heap=%u dma=%u stk=%u\n",
+                (int)art_download_in_progress,
+                last_transient_500_ms    ? (long)(_now - last_transient_500_ms)    : -1L,
+                last_network_end_ms      ? (long)(_now - last_network_end_ms)      : -1L,
+                last_art_download_end_ms ? (long)(_now - last_art_download_end_ms) : -1L,
+                heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
+                heap_caps_get_free_size(MALLOC_CAP_DMA),
+                uxTaskGetStackHighWaterMark(NULL));
+        }
+        {
+            unsigned long wait_start = millis();
+            while (art_download_in_progress) {
+                if (lyrics_abort_requested || lyrics_shutdown_requested) break;
+                if (millis() - wait_start > LYRICS_ART_WAIT_TIMEOUT_MS) break;  // safety timeout
+                vTaskDelay(pdMS_TO_TICKS(100));
             }
-            // Art download cooldown — 182-256KB HTTP art download followed immediately by
-            // lyrics HTTPS causes sdio_push_data_to_queue :928 crash (C6 RX pool exhausted).
-            if (last_art_download_end_ms > 0) {
-                unsigned long a_elapsed = millis() - last_art_download_end_ms;
-                if (a_elapsed < 3000) {
-                    Serial.printf("[LYRICS] Art download cooldown: waiting %lums\n", 3000 - a_elapsed);
-                    vTaskDelay(pdMS_TO_TICKS(3000 - a_elapsed));
-                }
-            }
-            // Queue poll cooldown — 50-item XML response stresses SDIO TX/RX pool.
-            // transport_drv_sta_tx copy_buff crash when HTTPS fires too soon after a queue poll.
-            if (last_queue_fetch_time > 0) {
-                unsigned long q_elapsed = millis() - last_queue_fetch_time;
-                if (q_elapsed < 3000) {
-                    Serial.printf("[LYRICS] Queue poll cooldown: waiting %lums\n", 3000 - q_elapsed);
-                    vTaskDelay(pdMS_TO_TICKS(3000 - q_elapsed));
-                }
-            }
-            // Art-in-progress gate: art sets this flag BEFORE its cooldown waits, so it is
-            // true during art's entire setup + download phase.  Lyrics firing HTTPS while
-            // art_download_in_progress is true stresses C6 SDIO — the HTTPS residue cooldown
-            // that follows is insufficient to recover, causing sdio_push_data_to_queue :928.
-            // Wait here (outside the mutex) until art is fully done before attempting HTTPS.
-            while (art_download_in_progress && !lyrics_abort_requested && !lyrics_shutdown_requested) {
-                vTaskDelay(pdMS_TO_TICKS(200));
-            }
-            if (art_download_in_progress) {
-                Serial.println("[LYRICS] Skipping fetch — art still in progress at gate");
-            }
+            unsigned long art_waited = millis() - wait_start;
+            if (art_waited > 50)
+                Serial.printf("[LYRICS] Art-wait done: %lums (art_dl=%d)\n", art_waited, (int)art_download_in_progress);
         }
 
-        // Abort/shutdown after cooldown
-        if (lyrics_abort_requested || lyrics_shutdown_requested) {
+        // SDIO crash-defence: HTTPS cooldown + general cooldown.
+        // First HTTPS session triggers ~77KB one-time mbedTLS global init (cipher tables,
+        // entropy, RNG state). Subsequent sessions reuse this state and need only ~5KB DMA.
+        // DMA floor after first lyrics fetch: ~20KB (97KB post-WiFi − 77KB mbedTLS).
+        // SDIO_WAIT_HTTPS_COOLDOWN ensures 3s gap after any previous HTTPS session.
+        if (!sdioPreWait("LYRICS", SDIO_WAIT_HTTPS_COOLDOWN, &lyrics_abort_requested, &lyrics_shutdown_requested)) {
             lyrics_fetching = false;
             lyrics_abort_requested = false;
             lyrics_retry_count = 0;
@@ -222,7 +209,18 @@ static void lyricsTaskFunc(void* param) {
             return;
         }
 
+        // Re-check art_download_in_progress after sdioPreWait:
+        // (1) requestLyrics() is called BEFORE requestAlbumArt() sets the flag in the same
+        //     updateUI() call — lyrics task may start and pass the while loop above before
+        //     the flag is set. (2) Track may change and set the flag mid-sdioPreWait.
+        // Either way: loop back and wait for art to finish before attempting HTTPS.
+        if (art_download_in_progress) {
+            Serial.println("[LYRICS] Art download in progress after pre-wait — retrying after art");
+            continue;
+        }
+
         // Acquire mutex (3s timeout — short so SOAP commands aren't blocked for long)
+        uint32_t t_lyr_mutex = millis();
         if (!xSemaphoreTake(network_mutex, pdMS_TO_TICKS(3000))) {
             Serial.println("[LYRICS] Network busy, skipping fetch");
             lyrics_fetching = false;
@@ -231,25 +229,54 @@ static void lyricsTaskFunc(void* param) {
             return;
         }
 
-        // Re-check cooldowns under mutex (another task may have run while we waited)
+        Serial.printf("[LYRICS] Mutex acquired after %lums | heap=%u dma=%u\n",
+            millis() - t_lyr_mutex,
+            heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
+            heap_caps_get_free_size(MALLOC_CAP_DMA));
+        // Inside-mutex check: final race guard. Track change may have set art_download_in_progress
+        // between the recheck above and mutex acquisition (tiny window). Release and loop back.
+        if (art_download_in_progress) {
+            Serial.println("[LYRICS] Art download started while acquiring mutex — retrying after art");
+            xSemaphoreGive(network_mutex);
+            continue;
+        }
+
+        // Inside-mutex rechecks: TCP drain time only (full cooldown already ran in sdioPreWait).
         {
             unsigned long now = millis();
-            unsigned long elapsed = now - last_network_end_ms;
-            if (last_network_end_ms > 0 && elapsed < 200)
-                vTaskDelay(pdMS_TO_TICKS(200 - elapsed));
-            now = millis();
-            elapsed = now - last_https_end_ms;
-            if (last_https_end_ms > 0 && elapsed < 2000)
-                vTaskDelay(pdMS_TO_TICKS(2000 - elapsed));
-            if (last_queue_fetch_time > 0) {
-                unsigned long q_elapsed = millis() - last_queue_fetch_time;
-                if (q_elapsed < 3000)
-                    vTaskDelay(pdMS_TO_TICKS(3000 - q_elapsed));
+            unsigned long elapsed_net  = now - last_network_end_ms;
+            unsigned long elapsed_https = now - last_https_end_ms;
+            if (last_network_end_ms > 0 && elapsed_net < SDIO_GENERAL_COOLDOWN_MS)
+                vTaskDelay(pdMS_TO_TICKS(SDIO_GENERAL_COOLDOWN_MS - elapsed_net));
+            if (last_https_end_ms > 0 && elapsed_https < SDIO_HTTPS_TCP_CLOSE_MS)
+                vTaskDelay(pdMS_TO_TICKS(SDIO_HTTPS_TCP_CLOSE_MS - elapsed_https));
+        }
+
+        // DMA guard: esp-aes needs at least ~5KB DMA for HTTPS session.
+        // Confirmed failure: dma=10,980 total → "Failed to allocate DMA descriptors".
+        // NOTE: heap_caps_get_largest_free_block(MALLOC_CAP_DMA) returns wrong values
+        // on ESP32-P4 (4-16 bytes even at 96KB free) — use get_free_size only.
+        // Art auto-restart fires at 20s DMA floor, so this guard is belt-and-suspenders.
+        {
+            size_t dma_total = heap_caps_get_free_size(MALLOC_CAP_DMA);
+            if (dma_total < 30000) {
+                Serial.printf("[LYRICS] DMA too low (%u) — skipping fetch\n", (unsigned)dma_total);
+                xSemaphoreGive(network_mutex);
+                lyrics_fetching = false;
+                lyricsTaskHandle = NULL;
+                vTaskDelete(NULL);
+                return;
             }
         }
 
-        // HTTPS fetch — scoped so WiFiClientSecure destructor frees TLS memory immediately
+        // HTTPS fetch — local WiFiClientSecure per song: TLS buffers (~32KB DMA) allocated for
+        // handshake and freed by destructor at scope exit. Permanent loss ~6.8KB (fragmentation)
+        // vs ~32KB if kept static. Critical: with static + setReuse the TLS record buffers are
+        // never released → session DMA floor drops ~32KB extra → Song 2+ pre-GET too low → crash.
         {
+            Serial.printf("[LYRICS] HTTPS open → lrclib.net | heap=%u dma=%u\n",
+                heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
+                heap_caps_get_free_size(MALLOC_CAP_DMA));
             WiFiClientSecure client;
             client.setInsecure();
             HTTPClient http;
@@ -257,9 +284,12 @@ static void lyricsTaskFunc(void* param) {
             http.setTimeout(10000);
             http.addHeader("User-Agent", "SonosESP/1.0");
 
+            uint32_t t_lyr_get = millis();
             int code = http.GET();
+            Serial.printf("[LYRICS] HTTPS ← code=%d in %lums\n", code, millis() - t_lyr_get);
             if (code == 200) {
                 payload = http.getString();
+                Serial.printf("[LYRICS] Payload: %u bytes\n", (unsigned)payload.length());
                 lyrics_retry_count = 0;
             } else {
                 const char* error_msg;
@@ -281,7 +311,7 @@ static void lyricsTaskFunc(void* param) {
                 Serial.flush();
 
                 if (code == -1 || code == 404) {
-                    // No retry: -1 = SDIO stressed, 404 = no lyrics exist
+                    // No retry: -1 = connection failed, 404 = no lyrics exist
                     Serial.printf("[LYRICS] No retry for HTTP %d — marking song as failed\n", code);
                     strncpy(lyrics_failed_artist, pending_artist, sizeof(lyrics_failed_artist) - 1);
                     lyrics_failed_artist[sizeof(lyrics_failed_artist) - 1] = '\0';
@@ -303,14 +333,27 @@ static void lyricsTaskFunc(void* param) {
                 }
             }
 
+            // Wait up to 200ms for server FIN (passive close → server gets TIME_WAIT, not us).
+            if (WiFiClient* s = http.getStreamPtr()) {
+                for (int i = 0; i < 200 && s->connected(); i++)
+                    vTaskDelay(pdMS_TO_TICKS(1));
+            }
             http.end();
-            client.stop();
-        }  // WiFiClientSecure + HTTPClient destroyed here
+            client.stop();  // Explicitly free mbedTLS record buffers (~32KB DMA) before destructor.
+                            // Without this, TLS in/out record buffers linger until scope exit but
+                            // destructor ordering is non-deterministic vs. HTTPClient destruction.
+            Serial.printf("[LYRICS] HTTPS closed | heap=%u dma=%u\n",
+                heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
+                heap_caps_get_free_size(MALLOC_CAP_DMA));
+        }  // WiFiClientSecure and HTTPClient destroyed here; TLS buffers already freed by stop()
 
-        // TLS cleanup wait + timestamp update before releasing mutex
-        vTaskDelay(pdMS_TO_TICKS(200));
+        // Cleanup wait + timestamp update before releasing mutex
+        vTaskDelay(pdMS_TO_TICKS(SDIO_HTTPS_TCP_CLOSE_MS));  // drain TLS FIN-ACK
         last_network_end_ms = millis();
         last_https_end_ms   = millis();
+        Serial.printf("[LYRICS] Mutex releasing | heap=%u dma=%u\n",
+            heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
+            heap_caps_get_free_size(MALLOC_CAP_DMA));
         xSemaphoreGive(network_mutex);
 
         // Abort check after mutex release
@@ -328,7 +371,7 @@ static void lyricsTaskFunc(void* param) {
         if (lyrics_retry_count == 0) break;  // gave up (marked as failed or -1/404)
 
         // Transient error: wait before retry
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        vTaskDelay(pdMS_TO_TICKS(LYRICS_RETRY_DELAY_MS));
         if (lyrics_abort_requested) {
             lyrics_fetching = false;
             lyrics_abort_requested = false;
@@ -373,11 +416,11 @@ static void lyricsTaskFunc(void* param) {
     vTaskDelete(NULL);
 }
 
-void requestLyrics(const String& artist, const String& title, int durationSec) {
-    if (artist.length() == 0 || title.length() == 0) return;
+bool requestLyrics(const String& artist, const String& title, int durationSec) {
+    if (artist.length() == 0 || title.length() == 0) return false;
     if (!lyric_lines) {
         Serial.println("[LYRICS] Buffer not initialized - call initLyrics() first");
-        return;
+        return false;
     }
 
     bool sameTrack = (strcmp(artist.c_str(), pending_artist) == 0 &&
@@ -388,7 +431,7 @@ void requestLyrics(const String& artist, const String& title, int durationSec) {
     // spawn a new lyrics task, creating an HTTPS retry storm that exhausts C6 SDIO buffers.
     if (strcmp(artist.c_str(), lyrics_failed_artist) == 0 &&
         strcmp(title.c_str(), lyrics_failed_title) == 0) {
-        return;  // Already attempted this track — skip silently
+        return false;  // Already attempted this track — skip silently
     }
 
     // New song: clear the failed-song record so it gets a fresh attempt
@@ -397,18 +440,36 @@ void requestLyrics(const String& artist, const String& title, int durationSec) {
         lyrics_failed_title[0]  = '\0';
     }
 
-    // If already fetching, abort the previous task (track changed)
-    if (lyrics_fetching) {
-        Serial.println("[LYRICS] Track changed, aborting previous fetch");
+    // CRITICAL: If the previous task is still running (lyricsTaskHandle != NULL), do NOT
+    // spawn a new task yet. Spawning with the same lyrics_task_stack and lyricsTaskTCB
+    // while the old task is alive (e.g. blocked inside http.GET() with up to 10s timeout)
+    // causes FreeRTOS to re-initialise the TCB in-place. The old task is zombified: its
+    // stack-allocated WiFiClientSecure is never destructed → ~32KB TLS DMA session buffers
+    // are permanently leaked. After 2-3 rapid track changes: DMA floor drops ~64-96KB →
+    // art pre-GET check fails → no album art loads for any subsequent song.
+    //
+    // Fix: signal abort + update pending parameters, but return false without spawning.
+    // Caller (updateUI) does NOT update lyrics_last_track when we return false, so the
+    // condition fires again next frame. Old task exits when its current network call
+    // completes or times out (≤ 10s) and sees lyrics_abort_requested → cleans up TLS
+    // properly → sets lyricsTaskHandle = NULL. Next frame: we spawn normally.
+    if (lyricsTaskHandle != NULL) {
+        Serial.println("[LYRICS] Previous task still running — aborting, will retry next frame");
         lyrics_abort_requested = true;
-        // Wait a bit for previous task to abort (it checks the flag every delay/loop)
-        vTaskDelay(pdMS_TO_TICKS(100));
+        clearLyrics();  // Clear old song lyrics from display immediately
+        // Update pending params so the new task fetches the correct song when spawned
+        strncpy(pending_artist, artist.c_str(), sizeof(pending_artist) - 1);
+        pending_artist[sizeof(pending_artist) - 1] = '\0';
+        strncpy(pending_title, title.c_str(), sizeof(pending_title) - 1);
+        pending_title[sizeof(pending_title) - 1] = '\0';
+        pending_duration = durationSec;
+        return false;  // Caller should NOT update lyrics_last_track; retry next frame
     }
 
-    // Clear previous lyrics
-    clearLyrics();
+    // No previous task running — proceed with spawn.
 
-    // Reset abort flag, retry counter, and any pending status for new fetch
+    // Clear previous lyrics and reset state
+    clearLyrics();
     lyrics_abort_requested = false;
     lyrics_retry_count = 0;
     lyrics_status_msg[0] = '\0';
@@ -423,25 +484,18 @@ void requestLyrics(const String& artist, const String& title, int durationSec) {
     lyrics_fetching = true;
     updateLyricsStatus();  // Show "fetching" status
 
-    // Spawn one-shot background task with PSRAM stack.
-    // Frees 8KB of DMA SRAM (same pool SDIO uses for RX buffers) — more headroom = fewer
-    // sdio_push_data_to_queue crashes. Safe: lyrics task never calls NVS/flash write
-    // functions, so spi_flash_disable_interrupts_caches_and_other_cpu() is never triggered
-    // against a PSRAM stack. TCB stays in internal SRAM (lyricsTaskTCB).
-    // Stack allocated once (lyrics_task_stack), reused across track changes.
-    if (!lyrics_task_stack) {
+    // Spawn one-shot background task with PSRAM stack to save DMA SRAM
+    if (!lyrics_task_stack)
         lyrics_task_stack = (StackType_t*)heap_caps_malloc(LYRICS_TASK_STACK, MALLOC_CAP_SPIRAM);
-    }
     if (lyrics_task_stack) {
         lyricsTaskHandle = xTaskCreateStaticPinnedToCore(
-            lyricsTaskFunc, "lyrics",
-            LYRICS_TASK_STACK / sizeof(StackType_t),
+            lyricsTaskFunc, "lyrics", LYRICS_TASK_STACK / sizeof(StackType_t),
             NULL, LYRICS_TASK_PRIORITY, lyrics_task_stack, &lyricsTaskTCB, 0);
     } else {
         Serial.println("[LYRICS] PSRAM stack alloc failed — using internal SRAM");
-        xTaskCreatePinnedToCore(lyricsTaskFunc, "lyrics", LYRICS_TASK_STACK, NULL,
-                                LYRICS_TASK_PRIORITY, &lyricsTaskHandle, 0);
+        xTaskCreatePinnedToCore(lyricsTaskFunc, "lyrics", LYRICS_TASK_STACK, NULL, LYRICS_TASK_PRIORITY, &lyricsTaskHandle, 0);
     }
+    return (lyricsTaskHandle != NULL);
 }
 
 void clearLyrics() {

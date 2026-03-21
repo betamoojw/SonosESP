@@ -156,12 +156,12 @@ void createMainScreen() {
 
     // Album name — below title, above progress bar
     lbl_album = lv_label_create(panel_right);
-    lv_obj_set_pos(lbl_album, 15, 134);
-    lv_obj_set_width(lbl_album, 270);
+    lv_obj_set_size(lbl_album, 270, 20);
+    lv_obj_set_pos(lbl_album, 15, 140);
     lv_label_set_long_mode(lbl_album, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_label_set_text(lbl_album, "");
-    lv_obj_set_style_text_color(lbl_album, COL_TEXT2, 0);
-    lv_obj_set_style_text_font(lbl_album, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_album, lv_color_hex(0xBBBBBB), 0);
+    lv_obj_set_style_text_font(lbl_album, &lv_font_montserrat_14, 0);
 
     // ===== PROGRESS BAR =====
     slider_progress = lv_slider_create(panel_right);

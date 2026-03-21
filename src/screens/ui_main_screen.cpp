@@ -12,46 +12,44 @@ void createMainScreen() {
     lv_obj_set_style_bg_color(scr_main, COL_BG, 0);
     lv_obj_clear_flag(scr_main, LV_OBJ_FLAG_SCROLLABLE);
 
-    // LEFT: Album Art Area — 450px wide so img has equal 30px margin left/top/bottom
-    // (ART_SIZE=420, panel height=480 → top/bottom=(480-420)/2=30px, left=30px inset)
+    // LEFT: Album Art Area (420px) - ambient color background
     panel_art = lv_obj_create(scr_main);
-    lv_obj_set_size(panel_art, 450, 480);
+    lv_obj_set_size(panel_art, 420, 480);
     lv_obj_set_pos(panel_art, 0, 0);
-    lv_obj_set_style_bg_color(panel_art, lv_color_hex(0x1a1a1a), 0);
+    lv_obj_set_style_bg_color(panel_art, lv_color_hex(0x1a1a1a), 0);  // Start with dark gray
     lv_obj_set_style_radius(panel_art, 0, 0);
     lv_obj_set_style_border_width(panel_art, 0, 0);
     lv_obj_set_style_pad_all(panel_art, 0, 0);
     lv_obj_clear_flag(panel_art, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Album art image — 30px from left edge, vertically centered → equal margins all sides
+    // Album art image - centered (JPEG decoder handles aspect ratio centering in buffer)
     img_album = lv_img_create(panel_art);
     lv_obj_set_size(img_album, ART_SIZE, ART_SIZE);
-    lv_obj_align(img_album, LV_ALIGN_LEFT_MID, 30, 0);
+    lv_obj_center(img_album);
     lv_obj_set_style_radius(img_album, 24, 0);
     lv_obj_set_style_clip_corner(img_album, true, 0);
 
-    // Placeholder when no art — centered on the art image area
+    // Placeholder when no art
     art_placeholder = lv_label_create(panel_art);
     lv_label_set_text(art_placeholder, LV_SYMBOL_AUDIO);
     lv_obj_set_style_text_font(art_placeholder, &lv_font_montserrat_32, 0);
     lv_obj_set_style_text_color(art_placeholder, COL_TEXT2, 0);
-    lv_obj_align(art_placeholder, LV_ALIGN_CENTER, 15, 0);  // +15px: center of art at x=240, center of panel at x=225
+    lv_obj_center(art_placeholder);
 
-
-    // Lyrics status indicator — top-left corner of art image
+    // Lyrics status indicator (top left of album art, small and subtle)
     lbl_lyrics_status = lv_label_create(panel_art);
     lv_label_set_text(lbl_lyrics_status, "");
-    lv_obj_set_style_text_color(lbl_lyrics_status, lv_color_hex(0x888888), 0);
-    lv_obj_set_style_text_font(lbl_lyrics_status, &lv_font_montserrat_14, 0);
-    lv_obj_align(lbl_lyrics_status, LV_ALIGN_TOP_LEFT, 35, 35);  // 5px inside art image (30px inset + 5px)
+    lv_obj_set_style_text_color(lbl_lyrics_status, lv_color_hex(0x888888), 0);  // Dim gray
+    lv_obj_set_style_text_font(lbl_lyrics_status, &lv_font_montserrat_14, 0);  // Small font
+    lv_obj_align(lbl_lyrics_status, LV_ALIGN_TOP_LEFT, 5, 5);  // Top left corner
 
     // Synced lyrics overlay (on top of album art)
     createLyricsOverlay(panel_art);
 
-    // RIGHT: Control Panel (350px) — narrowed by 30px to accommodate art left margin
+    // RIGHT: Control Panel (380px) - use global for ambient color changes
     panel_right = lv_obj_create(scr_main);
-    lv_obj_set_size(panel_right, 350, 480);
-    lv_obj_set_pos(panel_right, 450, 0);
+    lv_obj_set_size(panel_right, 380, 480);
+    lv_obj_set_pos(panel_right, 420, 0);
     lv_obj_set_style_bg_color(panel_right, COL_BG, 0);
     lv_obj_set_style_radius(panel_right, 0, 0);
     lv_obj_set_style_border_width(panel_right, 0, 0);
@@ -67,7 +65,7 @@ void createMainScreen() {
     // Back button - scale effect
     lv_obj_t* btn_back = lv_btn_create(panel_right);
     lv_obj_set_size(btn_back, 40, 40);
-    lv_obj_set_pos(btn_back, 10, 15);
+    lv_obj_set_pos(btn_back, 15, 15);
     lv_obj_set_style_bg_opa(btn_back, LV_OPA_TRANSP, 0);
     lv_obj_set_style_shadow_width(btn_back, 0, 0);
     lv_obj_set_style_transform_scale_x(btn_back, 280, LV_STATE_PRESSED);
@@ -85,12 +83,12 @@ void createMainScreen() {
     lv_label_set_text(lbl_device_name, "Now Playing");
     lv_obj_set_style_text_color(lbl_device_name, COL_TEXT2, 0);
     lv_obj_set_style_text_font(lbl_device_name, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(lbl_device_name, 55, 25);
+    lv_obj_set_pos(lbl_device_name, 60, 25);
 
     // Music Sources button - scale effect
     lv_obj_t* btn_sources = lv_btn_create(panel_right);
     lv_obj_set_size(btn_sources, 38, 38);
-    lv_obj_set_pos(btn_sources, 255, 18);
+    lv_obj_set_pos(btn_sources, 285, 18);
     lv_obj_set_style_bg_opa(btn_sources, LV_OPA_TRANSP, 0);
     lv_obj_set_style_shadow_width(btn_sources, 0, 0);
     lv_obj_set_style_transform_scale_x(btn_sources, 280, LV_STATE_PRESSED);
@@ -107,7 +105,7 @@ void createMainScreen() {
     // Settings button
     lv_obj_t* btn_settings = lv_btn_create(panel_right);
     lv_obj_set_size(btn_settings, 38, 38);
-    lv_obj_set_pos(btn_settings, 305, 18);
+    lv_obj_set_pos(btn_settings, 335, 18);
     lv_obj_set_style_bg_opa(btn_settings, LV_OPA_TRANSP, 0);
     lv_obj_set_style_shadow_width(btn_settings, 0, 0);
     lv_obj_add_event_cb(btn_settings, ev_settings, LV_EVENT_CLICKED, NULL);
@@ -120,8 +118,8 @@ void createMainScreen() {
     // ===== TRACK INFO =====
     // Artist (gray, smaller)
     lbl_artist = lv_label_create(panel_right);
-    lv_obj_set_pos(lbl_artist, 15, 75);
-    lv_obj_set_width(lbl_artist, 270);
+    lv_obj_set_pos(lbl_artist, 20, 75);
+    lv_obj_set_width(lbl_artist, 300);
     lv_label_set_long_mode(lbl_artist, LV_LABEL_LONG_DOT);
     lv_label_set_text(lbl_artist, "");
     lv_obj_set_style_text_color(lbl_artist, COL_TEXT2, 0);
@@ -129,8 +127,8 @@ void createMainScreen() {
 
     // Title (white, large)
     lbl_title = lv_label_create(panel_right);
-    lv_obj_set_pos(lbl_title, 15, 100);
-    lv_obj_set_width(lbl_title, 270);
+    lv_obj_set_pos(lbl_title, 20, 100);
+    lv_obj_set_width(lbl_title, 300);
     lv_label_set_long_mode(lbl_title, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_label_set_text(lbl_title, "Not Playing");
     lv_obj_set_style_text_color(lbl_title, COL_TEXT, 0);
@@ -139,7 +137,7 @@ void createMainScreen() {
     // Queue/Playlist button (on same line as track info) - scale effect
     btn_queue = lv_btn_create(panel_right);
     lv_obj_set_size(btn_queue, 48, 48);  // Increased from 35x35 for better touch target
-    lv_obj_set_pos(btn_queue, 295, 88);
+    lv_obj_set_pos(btn_queue, 323, 88);  // Adjusted position
     lv_obj_set_style_bg_opa(btn_queue, LV_OPA_TRANSP, 0);
     lv_obj_set_style_shadow_width(btn_queue, 0, 0);
     lv_obj_set_style_transform_scale_x(btn_queue, 280, LV_STATE_PRESSED);
@@ -156,8 +154,8 @@ void createMainScreen() {
 
     // Album name — below title, above progress bar
     lbl_album = lv_label_create(panel_right);
-    lv_obj_set_size(lbl_album, 270, 20);
-    lv_obj_set_pos(lbl_album, 15, 140);
+    lv_obj_set_size(lbl_album, 300, 20);
+    lv_obj_set_pos(lbl_album, 20, 135);
     lv_label_set_long_mode(lbl_album, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_label_set_text(lbl_album, "");
     lv_obj_set_style_text_color(lbl_album, lv_color_hex(0xBBBBBB), 0);
@@ -165,8 +163,8 @@ void createMainScreen() {
 
     // ===== PROGRESS BAR =====
     slider_progress = lv_slider_create(panel_right);
-    lv_obj_set_pos(slider_progress, 15, 160);
-    lv_obj_set_size(slider_progress, 320, 5);
+    lv_obj_set_pos(slider_progress, 20, 160);
+    lv_obj_set_size(slider_progress, 340, 5);
     lv_slider_set_range(slider_progress, 0, 100);
     lv_obj_set_style_bg_color(slider_progress, COL_BTN, LV_PART_MAIN);
     lv_obj_set_style_bg_color(slider_progress, COL_ACCENT, LV_PART_INDICATOR);
@@ -176,14 +174,14 @@ void createMainScreen() {
 
     // Time elapsed
     lbl_time = lv_label_create(panel_right);
-    lv_obj_set_pos(lbl_time, 15, 175);
+    lv_obj_set_pos(lbl_time, 20, 175);
     lv_label_set_text(lbl_time, "00:00");
     lv_obj_set_style_text_color(lbl_time, COL_TEXT2, 0);
     lv_obj_set_style_text_font(lbl_time, &lv_font_montserrat_14, 0);
 
     // Time remaining
     lbl_time_remaining = lv_label_create(panel_right);
-    lv_obj_set_pos(lbl_time_remaining, 287, 175);
+    lv_obj_set_pos(lbl_time_remaining, 315, 175);
     lv_label_set_text(lbl_time_remaining, "0:00");
     lv_obj_set_style_text_color(lbl_time_remaining, COL_TEXT2, 0);
     lv_obj_set_style_text_font(lbl_time_remaining, &lv_font_montserrat_14, 0);
@@ -194,7 +192,7 @@ void createMainScreen() {
     // Play button at center, others symmetrically placed
 
     int ctrl_y = 260;
-    int center_x = 175;
+    int center_x = 190;
 
     // PLAY button (center) - big white circle with scale effect
     btn_play = lv_btn_create(panel_right);
@@ -315,8 +313,8 @@ void createMainScreen() {
 
     // Volume slider
     slider_vol = lv_slider_create(panel_right);
-    lv_obj_set_size(slider_vol, 240, 6);
-    lv_obj_set_pos(slider_vol, 65, vol_y + 17);
+    lv_obj_set_size(slider_vol, 260, 6);
+    lv_obj_set_pos(slider_vol, 70, vol_y + 17);
     lv_slider_set_range(slider_vol, 0, 100);
     lv_obj_set_style_bg_color(slider_vol, COL_BTN, LV_PART_MAIN);
     lv_obj_set_style_bg_color(slider_vol, COL_TEXT2, LV_PART_INDICATOR);
@@ -329,7 +327,7 @@ void createMainScreen() {
 
     // Small album art for next track (hidden for now)
     img_next_album = lv_img_create(panel_right);
-    lv_obj_set_pos(img_next_album, 15, next_y);
+    lv_obj_set_pos(img_next_album, 20, next_y);
     lv_obj_set_size(img_next_album, 40, 40);
     lv_obj_set_style_radius(img_next_album, 4, 0);
     lv_obj_set_style_clip_corner(img_next_album, true, 0);
@@ -337,18 +335,18 @@ void createMainScreen() {
 
     // "Next:" label
     lbl_next_header = lv_label_create(panel_right);  // Use GLOBAL, not local!
-    lv_obj_set_pos(lbl_next_header, 15, next_y);
+    lv_obj_set_pos(lbl_next_header, 20, next_y);
     lv_label_set_text(lbl_next_header, "Next:");
     lv_obj_set_style_text_color(lbl_next_header, COL_TEXT2, 0);
     lv_obj_set_style_text_font(lbl_next_header, &lv_font_montserrat_12, 0);
 
     // Next track title - clickable to play next
     lbl_next_title = lv_label_create(panel_right);
-    lv_obj_set_pos(lbl_next_title, 55, next_y);
+    lv_obj_set_pos(lbl_next_title, 60, next_y);
     lv_label_set_text(lbl_next_title, "");
     lv_obj_set_style_text_color(lbl_next_title, COL_TEXT, 0);
     lv_obj_set_style_text_font(lbl_next_title, &lv_font_montserrat_14, 0);
-    lv_obj_set_width(lbl_next_title, 275);
+    lv_obj_set_width(lbl_next_title, 300);
     lv_label_set_long_mode(lbl_next_title, LV_LABEL_LONG_SCROLL_CIRCULAR);
     // Make it clickable to play next track
     lv_obj_add_flag(lbl_next_title, LV_OBJ_FLAG_CLICKABLE);
@@ -360,11 +358,11 @@ void createMainScreen() {
 
     // Next track artist - also clickable
     lbl_next_artist = lv_label_create(panel_right);
-    lv_obj_set_pos(lbl_next_artist, 55, next_y + 18);
+    lv_obj_set_pos(lbl_next_artist, 60, next_y + 18);
     lv_label_set_text(lbl_next_artist, "");
     lv_obj_set_style_text_color(lbl_next_artist, COL_TEXT2, 0);
     lv_obj_set_style_text_font(lbl_next_artist, &lv_font_montserrat_12, 0);
-    lv_obj_set_width(lbl_next_artist, 275);
+    lv_obj_set_width(lbl_next_artist, 300);
     lv_label_set_long_mode(lbl_next_artist, LV_LABEL_LONG_SCROLL_CIRCULAR);
     // Make it clickable to play next track
     lv_obj_add_flag(lbl_next_artist, LV_OBJ_FLAG_CLICKABLE);

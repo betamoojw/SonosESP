@@ -7,20 +7,23 @@ Created to understand why **CMD_NEXT works** but **CMD_PLAY_QUEUE_ITEM gets stuc
 
 ---
 
-## Current State (as of 2026-03-15)
+## Current State (as of 2026-03-21)
 
 ### What Works
 - CMD_NEXT: art loads reliably
+- CMD_PLAY_QUEUE_ITEM: art loads reliably (DMA threshold lowered + deadlock fixed)
 - Art LRU cache: cache hits work at any DMA level (no TCP)
-- Lyrics: fragmentation guard (`largest_free_block`) correctly prevents TLS during art downloads
+- Lyrics: `art_download_in_progress` flag prevents TLS race with art download
+- WiFi screen: phone-style layout, SSID deduplication, spinner feedback, 30s timeout
 
-### What Is Broken
-- **DMA depletes to ~19-26KB and gets stuck** — art enters DMA wait loop and can't exit
-- **Root cause (CONFIRMED)**: Every TCP connection (SOAP + art download) uses FIN-close → TIME_WAIT PCB → each PCB holds **~6-8.7KB DMA** for 120 seconds
-- **Math**: boot DMA ~115KB. 16 max sockets (CONFIG_LWIP_MAX_SOCKETS=16). At steady state: 16 PCBs × ~6KB = 96KB consumed → only 19KB free
-- **SO_LINGER fix FAILED**: `lwip_setsockopt(fd, SO_LINGER)` returns -1 — not compiled into the pioarduino pre-built framework. Silently does nothing.
-- **Result**: art stuck in DMA wait loop at outer=25+ (75+ seconds) waiting for DMA to recover to 40KB threshold it can never reach
-- **Lyrics instability**: `largest_free_block` guard aborts lyrics when art is downloading (correct) BUT when DMA is permanently depleted, lyrics also never runs
+### Previously Broken — Now Fixed
+- **DMA depletion / art stuck in wait loop**: `ART_MIN_FREE_DMA` lowered from 40KB → 8KB. Structural steady-state DMA floor is ~19-26KB (16 TIME_WAIT PCBs × ~6KB); the old 40KB threshold was architecturally unreachable.
+- **DMA wait deadlock**: `art_download_in_progress=false` during DMA wait let polling fire SOAPs → new PCBs created as fast as old expired → DMA stayed flat. Fixed: flag=true before DMA wait loop; brief warm windows (flag=false for 300ms) every 3s prevent SDIO clock-gate.
+- **Pre-GET burst crash** (`ART_MIN_DMA_PRE_BURST=36000`): TCP slow-start cwnd 10-14 MSS → server burst up to 20KB before window-update ACK arrives. Pre-GET DMA check gates this.
+- **SO_LINGER unavailable**: `CONFIG_LWIP_SO_LINGER` not compiled in pre-built framework — `lwip_setsockopt` returns -1 silently. Mitigation: `ART_MIN_DMA_PRE_BURST` guard + 5ms inter-chunk reads.
+
+### Remaining Open
+- **Session DMA depletion floor**: WiFi dynamic RX buffers (CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32 × 1.6KB) appear to not fully release after heavy downloads. Not fixable without recompiling framework. Mitigated by lowered `ART_MIN_FREE_DMA` + pre-burst guard.
 
 ---
 
@@ -30,7 +33,7 @@ Created to understand why **CMD_NEXT works** but **CMD_PLAY_QUEUE_ITEM gets stuc
 
 | Task Name | Priority | Core | Stack | Purpose |
 |-----------|----------|------|-------|---------|
-| `mainAppTask` | 1 | 1 | 8KB (SRAM) | LVGL render, UI updates, watchdog |
+| `mainAppTask` | 1 | 1 | 16KB (SRAM) | LVGL render, UI updates, watchdog |
 | `loopTask` | 1 | 1 | 8KB (SRAM) | Idle (just vTaskDelay) |
 | `albumArtTask` | 0 | 0 | 20KB (PSRAM) | Download + decode art |
 | `SonosNet` | 2 | 0 | 6KB | Process command queue (Next/Pause/Seek/etc.) |
@@ -163,7 +166,7 @@ If DMA was already at 20KB before CMD_PLAY_QUEUE_ITEM fires, adding 18KB = -DMA.
 
 ## Why CMD_NEXT Works But CMD_PLAY_QUEUE_ITEM Gets Stuck
 
-**CMD_NEXT typically fires when DMA is still healthy** (user presses Next at the start of a session, DMA ~90KB). 2 new PCBs = 12KB consumed, leaving 78KB → well above ART_MIN_FREE_DMA=40KB → art downloads fine.
+**CMD_NEXT typically fires when DMA is still healthy** (user presses Next at the start of a session, DMA ~90KB). 2 new PCBs = 12KB consumed, leaving 78KB → well above ART_MIN_FREE_DMA (8KB, lowered from 40KB) → art downloads fine.
 
 **CMD_PLAY_QUEUE_ITEM typically fires AFTER the user has been using the app** for a while:
 - Many SOAPs have accumulated: 16 TIME_WAIT PCBs × 6KB = 96KB consumed
@@ -241,18 +244,22 @@ albumArtTask() infinite loop:
 │   → returns false if abort/shutdown fired → continue
 │
 ├─ [DMA WAIT LOOP] ─────────────────────────────────────────────────────────
-│   art_download_in_progress = TRUE  ← suppress polling NOW
+│   art_download_in_progress = TRUE  ← suppress polling NOW (set BEFORE wait)
 │   for outer in 0..50:  (max 165s total)
 │       for inner in 0..30:  (3s per outer)
 │           fdma = heap_caps_get_free_size(DMA)
-│           if fdma >= ART_MIN_FREE_DMA (40KB): dma_ok=true; break
+│           if fdma >= ART_MIN_FREE_DMA (8KB): dma_ok=true; break
 │           vTaskDelay(100ms)
 │       if !dma_ok:
 │           art_download_in_progress = FALSE; vTaskDelay(300ms)  ← SDIO warm
 │           art_download_in_progress = TRUE
 │   if !dma_ok after 50 loops:
-│       if fdma < 35000: Serial.printf("DMA critically low — skipping"); continue
-│       else: proceed cautiously (DMA 35-40KB range)
+│       if fdma < 16384: Serial.printf("DMA critically low — skipping"); continue
+│       else: proceed cautiously
+│
+│   [PRE-GET DMA BURST CHECK] — immediately before http.GET()
+│       if fdma < ART_MIN_DMA_PRE_BURST (36000): abort (TCP slow-start max burst ~21KB
+│           would crash dl-start); sets last_art_download_end_ms to rate-limit retries
 │
 ├─ [ACQUIRE MUTEX + DOWNLOAD] ──────────────────────────────────────────────
 │   xSemaphoreTake(network_mutex, 10s)
@@ -298,7 +305,7 @@ At polling rate 300ms per cycle, 2 SOAPs per cycle:
 - **Boot DMA: ~115KB**
 - **Available for downloads: 115 - 96 = ~19KB**
 
-### Why ART_MIN_FREE_DMA=40KB Is Unreachable
+### Why ART_MIN_FREE_DMA=40KB Was Unreachable (Historical — threshold now 8KB)
 
 The threshold was set at 40KB = 17KB TCP pre-connect + 23KB dl-start headroom. Correct calculation, but unreachable at steady state because the 16 TIME_WAIT PCBs are always consuming the headroom.
 
@@ -317,10 +324,9 @@ The threshold was set at 40KB = 17KB TCP pre-connect + 23KB dl-start headroom. C
 - Sonos device does NOT support HTTP/1.1 keep-alive
 - Already confirmed: "Fresh HTTPClient per request — Sonos's embedded HTTP server does not support HTTP/1.1 keep-alive"
 
-**Option D: Lower ART_MIN_FREE_DMA to 20KB**
-- Risk: TCP pre-connect (17KB) + dl-start server burst (~14KB) = 31KB needed minimum
-- At 19KB free: TCP pre-connect would leave 2KB → server burst fails → pkt_rxbuff overflow → crash
-- Not viable
+**Option D: Lower ART_MIN_FREE_DMA** ✅ DONE
+- Lowered to 8KB. Pre-burst safety now handled by `ART_MIN_DMA_PRE_BURST=36000` check immediately before HTTP GET (accounts for TCP slow-start max burst of 14×1460=20KB).
+- `ART_TCP_RCVBUF_DL_SAFETY=12000` as belt-and-suspenders at dl-start.
 
 **Option E: Brief wait after http.getString() before http.end() in sendSOAP**
 - If Sonos server sends FIN immediately after response body, a 1-5ms wait lets FIN arrive

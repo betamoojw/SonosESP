@@ -43,7 +43,7 @@ void createMainScreen() {
     lv_label_set_text(lbl_lyrics_status, "");
     lv_obj_set_style_text_color(lbl_lyrics_status, lv_color_hex(0x888888), 0);
     lv_obj_set_style_text_font(lbl_lyrics_status, &lv_font_montserrat_14, 0);
-    lv_obj_align(lbl_lyrics_status, LV_ALIGN_TOP_LEFT, 5, 5);  // In the 30px gap above art image, not inside art
+    lv_obj_align(lbl_lyrics_status, LV_ALIGN_TOP_LEFT, 30, 5);  // Aligned with art left edge (x=30), in the gap above art
 
     // Synced lyrics overlay (on top of album art)
     createLyricsOverlay(panel_art);

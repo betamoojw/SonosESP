@@ -518,7 +518,7 @@ void createLyricsOverlay(lv_obj_t* parent) {
     lv_obj_set_style_bg_grad_color(lyrics_container, lv_color_hex(0x000000), 0);
     lv_obj_set_style_bg_grad_dir(lyrics_container, LV_GRAD_DIR_VER, 0);
     lv_obj_set_style_bg_main_opa(lyrics_container, LV_OPA_TRANSP, 0);   // top: transparent
-    lv_obj_set_style_bg_grad_opa(lyrics_container, 230, 0);              // bottom: ~90% opaque
+    lv_obj_set_style_bg_grad_opa(lyrics_container, 245, 0);              // bottom: ~96% opaque
     lv_obj_set_style_border_width(lyrics_container, 0, 0);
     lv_obj_set_style_outline_width(lyrics_container, 0, 0);
     lv_obj_set_style_shadow_width(lyrics_container, 0, 0);
@@ -654,13 +654,19 @@ void updateLyricsDisplay(int position_seconds) {
     lv_label_set_text(lbl_lyric_current, lyric_lines[idx].text);
     lv_label_set_text(lbl_lyric_next, idx < lyric_count - 1 ? lyric_lines[idx + 1].text : "");
 
-    // Color current line with brightened dominant color
+    // Color current line with vivid dominant color: normalize to max=255, then floor at 200
     uint8_t r = (dominant_color >> 16) & 0xFF;
     uint8_t g = (dominant_color >> 8) & 0xFF;
     uint8_t b = dominant_color & 0xFF;
-    r = (uint8_t)max(min((int)r * 4, 255), 120);
-    g = (uint8_t)max(min((int)g * 4, 255), 120);
-    b = (uint8_t)max(min((int)b * 4, 255), 120);
+    int max_ch = max({(int)r, (int)g, (int)b});
+    if (max_ch > 0) {
+        r = (uint8_t)min(255, (int)r * 255 / max_ch);
+        g = (uint8_t)min(255, (int)g * 255 / max_ch);
+        b = (uint8_t)min(255, (int)b * 255 / max_ch);
+    }
+    r = max(r, (uint8_t)200);
+    g = max(g, (uint8_t)200);
+    b = max(b, (uint8_t)200);
     lv_obj_set_style_text_color(lbl_lyric_current, lv_color_make(r, g, b), 0);
 }
 

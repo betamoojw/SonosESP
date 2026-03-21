@@ -1054,14 +1054,54 @@ void albumArtTask(void* param) {
                                   (unsigned)dma_snap, (unsigned)ART_MIN_DMA_PRE_BURST,
                                   (unsigned)(largest / 1024), dma_fail_count);
                     if (dma_fail_count >= 3) {
-                        // DMA permanently depleted — restart to restore ~115KB DMA.
-                        // Clear flag FIRST so polling fires SOAPs during the 3s flush wait,
-                        // keeping SDIO warm and preventing DMA clock-gate before restart.
-                        Serial.printf("[ART] DMA low x%d (largest=%uKB) — restarting to recover DMA\n",
-                                      dma_fail_count,
-                                      (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_DMA)/1024));
-                        art_download_in_progress = false;  // keep SDIO warm during restart wait
-                        vTaskDelay(pdMS_TO_TICKS(3000));  // let serial flush + SDIO settle
+                        // DMA depleted (WiFi dynamic RX buffers don't release after heavy downloads).
+                        // Try WiFi stop+reconnect first — esp_wifi_stop() releases all dynamic RX
+                        // buffers (~51KB max at 32 buffers × 1.6KB), potentially recovering DMA
+                        // without a full reboot. Fall back to esp_restart() only if still low.
+                        Serial.printf("[ART] DMA low x%d — attempting WiFi reconnect recovery\n",
+                                      dma_fail_count);
+                        art_download_in_progress = false;  // keep SDIO warm during recovery
+
+                        // Stop WiFi: releases dynamic RX buffer pool back to DMA heap
+                        WiFi.disconnect(true);             // true → calls esp_wifi_stop()
+                        vTaskDelay(pdMS_TO_TICKS(2000));   // allow DMA to drain
+
+                        size_t dma_after = heap_caps_get_free_size(MALLOC_CAP_DMA);
+                        Serial.printf("[ART] DMA after WiFi stop: %u (was %u)\n",
+                                      (unsigned)dma_after, (unsigned)dma_snap);
+
+                        if (dma_after > ART_MIN_DMA_PRE_BURST) {
+                            // Recovery worked — reconnect WiFi using saved credentials
+                            Preferences prefs;
+                            prefs.begin(NVS_NAMESPACE, true);
+                            String ssid = prefs.getString(NVS_KEY_SSID, "");
+                            String pass = prefs.getString(NVS_KEY_PASSWORD, "");
+                            prefs.end();
+
+                            Serial.printf("[ART] DMA recovered — reconnecting WiFi to '%s'\n",
+                                          ssid.c_str());
+                            WiFi.begin(ssid.c_str(), pass.c_str());
+
+                            unsigned long t = millis();
+                            while (WiFi.status() != WL_CONNECTED && millis() - t < 15000) {
+                                vTaskDelay(pdMS_TO_TICKS(500));
+                            }
+
+                            if (WiFi.status() == WL_CONNECTED) {
+                                Serial.printf("[ART] WiFi reconnected — DMA=%u, resuming\n",
+                                              (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA));
+                                dma_fail_count = 0;
+                                dma_fail_url[0] = '\0';
+                                last_art_download_end_ms = millis();
+                                continue;  // retry download without reboot
+                            }
+                            Serial.println("[ART] WiFi reconnect timed out — restarting");
+                        } else {
+                            Serial.printf("[ART] DMA still low after WiFi stop (%u) — restarting\n",
+                                          (unsigned)dma_after);
+                        }
+
+                        vTaskDelay(pdMS_TO_TICKS(1000));  // serial flush
                         esp_restart();
                     } else {
                         // Clear flag so polling keeps SDIO warm during recovery wait.

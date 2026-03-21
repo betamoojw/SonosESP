@@ -390,7 +390,9 @@ void ev_wifi_connect(lv_event_t* e) {
             selectedSSID.c_str(), ip.c_str());
         lv_obj_set_style_text_color(lbl_wifi_status, lv_color_hex(0x4ECB71), 0);
 
-        // Clear password field for security
+        // Hide strip + keyboard, clear password field
+        lv_obj_add_flag(pw_strip, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
         lv_textarea_set_text(ta_password, "");
     } else {
         // Determine failure reason

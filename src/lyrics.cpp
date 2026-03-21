@@ -662,15 +662,6 @@ void updateLyricsDisplay(int position_seconds) {
     g = (uint8_t)max(min((int)g * 4, 255), 120);
     b = (uint8_t)max(min((int)b * 4, 255), 120);
     lv_obj_set_style_text_color(lbl_lyric_current, lv_color_make(r, g, b), 0);
-
-    // Color current line with brightened dominant color (brighter than progress bar)
-    uint8_t r = (dominant_color >> 16) & 0xFF;
-    uint8_t g = (dominant_color >> 8) & 0xFF;
-    uint8_t b = dominant_color & 0xFF;
-    r = (uint8_t)max(min((int)r * 4, 255), 120);  // Brighter: 4x multiplier, floor 120
-    g = (uint8_t)max(min((int)g * 4, 255), 120);
-    b = (uint8_t)max(min((int)b * 4, 255), 120);
-    lv_obj_set_style_text_color(lbl_lyric_current, lv_color_make(r, g, b), 0);
 }
 
 void setLyricsVisible(bool show) {

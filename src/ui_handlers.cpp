@@ -1486,10 +1486,16 @@ static void displayCompletedArt() {
         lv_obj_center(img_album);
         lv_obj_remove_flag(img_album, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(art_placeholder, LV_OBJ_FLAG_HIDDEN);
+        // Blurred background — same art_dsc, stretched to fill screen (LVGL 9.5)
+        if (img_bg_blur) {
+            lv_image_set_src(img_bg_blur, &art_dsc);
+            lv_obj_remove_flag(img_bg_blur, LV_OBJ_FLAG_HIDDEN);
+        }
         art_ready = false;
         art_show_placeholder = false;
     } else if (art_show_placeholder) {
         lv_obj_add_flag(img_album, LV_OBJ_FLAG_HIDDEN);
+        if (img_bg_blur) lv_obj_add_flag(img_bg_blur, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(art_placeholder, LV_OBJ_FLAG_HIDDEN);
         art_show_placeholder = false;
     }

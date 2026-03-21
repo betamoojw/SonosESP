@@ -52,7 +52,7 @@
  *********************/
 #define LV_USE_DRAW_SW 1
 #define LV_USE_DRAW_MASKS 1
-#define LV_DRAW_SW_SHADOW_CACHE_SIZE 0         // Disable shadow cache
+#define LV_DRAW_SW_SHADOW_CACHE_SIZE 256        // Small cache for drop-shadow on album art
 #define LV_DRAW_SW_GRADIENT_CACHE_DEF_SIZE 512
 #define LV_DRAW_SW_COMPLEX 1
 

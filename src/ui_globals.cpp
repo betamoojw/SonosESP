@@ -53,6 +53,7 @@ lv_obj_t *scr_general = nullptr;
 // Main Screen UI Elements
 // ============================================================================
 lv_obj_t *img_album = nullptr;
+lv_obj_t *img_bg_blur = nullptr;   // Full-screen blurred art background (LVGL 9.5 blur effect)
 lv_obj_t *lbl_title = nullptr;
 lv_obj_t *lbl_artist = nullptr;
 lv_obj_t *lbl_album = nullptr;

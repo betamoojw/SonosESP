@@ -68,7 +68,8 @@ extern lv_obj_t *scr_wifi, *scr_sources, *scr_browse, *scr_display, *scr_ota, *s
 extern lv_obj_t *scr_clock, *scr_clock_settings;
 
 // Main screen UI elements
-extern lv_obj_t *img_album, *lbl_title, *lbl_artist, *lbl_album, *lbl_time, *lbl_time_remaining;
+extern lv_obj_t *img_album, *img_bg_blur;
+extern lv_obj_t *lbl_title, *lbl_artist, *lbl_album, *lbl_time, *lbl_time_remaining;
 extern lv_obj_t *lbl_lyrics_status;  // Lyrics status indicator (top of album art)
 extern lv_obj_t *btn_play, *btn_prev, *btn_next, *btn_mute, *btn_shuffle, *btn_repeat, *btn_queue;
 extern lv_obj_t *slider_progress, *slider_vol;

@@ -12,6 +12,19 @@ void createMainScreen() {
     lv_obj_set_style_bg_color(scr_main, COL_BG, 0);
     lv_obj_clear_flag(scr_main, LV_OBJ_FLAG_SCROLLABLE);
 
+    // ── BLURRED ART BACKGROUND (LVGL 9.5) ─────────────────────────────────────
+    // Full-screen stretched + blurred copy of album art, rendered behind everything.
+    // Gives the Apple Music / Spotify "frosted glass" look on the controls panel.
+    // Hidden until first art loads; updated in displayCompletedArt().
+    img_bg_blur = lv_image_create(scr_main);
+    lv_obj_set_size(img_bg_blur, 800, 480);
+    lv_obj_set_pos(img_bg_blur, 0, 0);
+    lv_image_set_inner_align(img_bg_blur, LV_IMAGE_ALIGN_STRETCH);
+    lv_obj_set_style_blur_radius(img_bg_blur, 30, 0);
+    lv_obj_set_style_opa(img_bg_blur, LV_OPA_60, 0);
+    lv_obj_add_flag(img_bg_blur, LV_OBJ_FLAG_HIDDEN);
+    // Created first → naturally at z=0, behind panel_art and panel_right
+
     // LEFT: Album Art Area — 450px wide so img has equal 30px margin left/top/bottom
     // (ART_SIZE=420, panel height=480 → top/bottom=(480-420)/2=30px, left=30px inset)
     panel_art = lv_obj_create(scr_main);
@@ -29,6 +42,11 @@ void createMainScreen() {
     lv_obj_align(img_album, LV_ALIGN_LEFT_MID, 30, 0);
     lv_obj_set_style_radius(img_album, 24, 0);
     lv_obj_set_style_clip_corner(img_album, true, 0);
+    // Drop shadow — art floats off the background (same design language as Apple Music)
+    lv_obj_set_style_shadow_width(img_album, 40, 0);
+    lv_obj_set_style_shadow_color(img_album, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_shadow_opa(img_album, LV_OPA_50, 0);
+    lv_obj_set_style_shadow_spread(img_album, 4, 0);
 
     // Placeholder when no art — centered on the art image area
     art_placeholder = lv_label_create(panel_art);
@@ -53,6 +71,7 @@ void createMainScreen() {
     lv_obj_set_size(panel_right, 350, 480);
     lv_obj_set_pos(panel_right, 450, 0);
     lv_obj_set_style_bg_color(panel_right, COL_BG, 0);
+    lv_obj_set_style_bg_opa(panel_right, LV_OPA_80, 0);  // Semi-transparent: blurred art shows through
     lv_obj_set_style_radius(panel_right, 0, 0);
     lv_obj_set_style_border_width(panel_right, 0, 0);
     lv_obj_set_style_pad_all(panel_right, 0, 0);

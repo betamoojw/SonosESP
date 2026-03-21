@@ -507,23 +507,26 @@ void clearLyrics() {
 }
 
 void createLyricsOverlay(lv_obj_t* parent) {
-    // Semi-transparent container at bottom of album art
+    // Gradient overlay at bottom of album art — transparent top, semi-opaque black bottom
     lyrics_container = lv_obj_create(parent);
-    lv_obj_set_size(lyrics_container, 420, 140);
-    lv_obj_align(lyrics_container, LV_ALIGN_BOTTOM_MID, 0, -24);  // Adjusted to prevent overlap
+    lv_obj_set_size(lyrics_container, 420, 180);
+    lv_obj_align(lyrics_container, LV_ALIGN_BOTTOM_MID, 0, 0);
+    // Vertical gradient: transparent at top, dark semi-opaque at bottom
+    lv_obj_set_style_bg_opa(lyrics_container, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(lyrics_container, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(lyrics_container, 180, 0);
+    lv_obj_set_style_bg_grad_color(lyrics_container, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_grad_dir(lyrics_container, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_main_opa(lyrics_container, LV_OPA_TRANSP, 0);   // top: transparent
+    lv_obj_set_style_bg_grad_opa(lyrics_container, 200, 0);              // bottom: ~78% opaque
     lv_obj_set_style_border_width(lyrics_container, 0, 0);
-    lv_obj_set_style_border_opa(lyrics_container, 0, 0);      // Force no border
     lv_obj_set_style_outline_width(lyrics_container, 0, 0);
-    lv_obj_set_style_outline_opa(lyrics_container, 0, 0);     // Force no outline
-    lv_obj_set_style_shadow_width(lyrics_container, 0, 0);    // No shadow
-    lv_obj_set_style_shadow_opa(lyrics_container, 0, 0);      // Force no shadow
-    lv_obj_set_style_radius(lyrics_container, 0, 0);
-    lv_obj_set_style_pad_top(lyrics_container, 8, 0);
-    lv_obj_set_style_pad_bottom(lyrics_container, 4, 0);      // Small padding to avoid edge artifact
-    lv_obj_set_style_pad_left(lyrics_container, 8, 0);
-    lv_obj_set_style_pad_right(lyrics_container, 8, 0);
+    lv_obj_set_style_shadow_width(lyrics_container, 0, 0);
+    lv_obj_set_style_radius(lyrics_container, 24, 0);     // match album art corner radius
+    lv_obj_set_style_clip_corner(lyrics_container, true, 0);
+    lv_obj_set_style_pad_top(lyrics_container, 24, 0);    // extra top pad — fades into art
+    lv_obj_set_style_pad_bottom(lyrics_container, 12, 0);
+    lv_obj_set_style_pad_left(lyrics_container, 12, 0);
+    lv_obj_set_style_pad_right(lyrics_container, 12, 0);
     lv_obj_clear_flag(lyrics_container, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(lyrics_container, LV_SCROLLBAR_MODE_OFF);
 
@@ -531,32 +534,32 @@ void createLyricsOverlay(lv_obj_t* parent) {
     lv_obj_set_flex_flow(lyrics_container, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(lyrics_container, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    // Previous line (dimmed, scroll if too long)
+    // Previous line — dimmed
     lbl_lyric_prev = lv_label_create(lyrics_container);
     lv_label_set_text(lbl_lyric_prev, "");
-    lv_obj_set_width(lbl_lyric_prev, 400);
-    lv_obj_set_style_text_font(lbl_lyric_prev, &lv_font_montserrat_14, 0);  // Smaller size
-    lv_obj_set_style_text_color(lbl_lyric_prev, lv_color_hex(0x888888), 0);
+    lv_obj_set_width(lbl_lyric_prev, 396);
+    lv_obj_set_style_text_font(lbl_lyric_prev, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_lyric_prev, lv_color_hex(0xAAAAAA), 0);
     lv_obj_set_style_text_align(lbl_lyric_prev, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_long_mode(lbl_lyric_prev, LV_LABEL_LONG_SCROLL_CIRCULAR);  // Scroll effect
+    lv_label_set_long_mode(lbl_lyric_prev, LV_LABEL_LONG_SCROLL_CIRCULAR);
 
-    // Current line (bright, BIGGER, scroll if too long)
+    // Current line — bright, larger
     lbl_lyric_current = lv_label_create(lyrics_container);
     lv_label_set_text(lbl_lyric_current, "");
-    lv_obj_set_width(lbl_lyric_current, 400);
-    lv_obj_set_style_text_font(lbl_lyric_current, &lv_font_montserrat_20, 0);  // BIGGER for current!
+    lv_obj_set_width(lbl_lyric_current, 396);
+    lv_obj_set_style_text_font(lbl_lyric_current, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(lbl_lyric_current, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_align(lbl_lyric_current, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_long_mode(lbl_lyric_current, LV_LABEL_LONG_SCROLL_CIRCULAR);  // Scroll effect
+    lv_label_set_long_mode(lbl_lyric_current, LV_LABEL_LONG_SCROLL_CIRCULAR);
 
-    // Next line (dimmed, scroll if too long)
+    // Next line — dimmed
     lbl_lyric_next = lv_label_create(lyrics_container);
     lv_label_set_text(lbl_lyric_next, "");
-    lv_obj_set_width(lbl_lyric_next, 400);
-    lv_obj_set_style_text_font(lbl_lyric_next, &lv_font_montserrat_14, 0);  // Smaller size
-    lv_obj_set_style_text_color(lbl_lyric_next, lv_color_hex(0x888888), 0);
+    lv_obj_set_width(lbl_lyric_next, 396);
+    lv_obj_set_style_text_font(lbl_lyric_next, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_lyric_next, lv_color_hex(0xAAAAAA), 0);
     lv_obj_set_style_text_align(lbl_lyric_next, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_long_mode(lbl_lyric_next, LV_LABEL_LONG_SCROLL_CIRCULAR);  // Scroll effect
+    lv_label_set_long_mode(lbl_lyric_next, LV_LABEL_LONG_SCROLL_CIRCULAR);
 
     // Start hidden
     lv_obj_add_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN);

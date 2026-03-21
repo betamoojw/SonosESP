@@ -26,6 +26,8 @@ void createMainScreen() {
     img_album = lv_img_create(panel_art);
     lv_obj_set_size(img_album, ART_SIZE, ART_SIZE);
     lv_obj_center(img_album);
+    lv_obj_set_style_radius(img_album, 24, 0);
+    lv_obj_set_style_clip_corner(img_album, true, 0);
 
     // Placeholder when no art
     art_placeholder = lv_label_create(panel_art);

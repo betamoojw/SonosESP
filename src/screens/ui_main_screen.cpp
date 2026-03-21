@@ -37,15 +37,6 @@ void createMainScreen() {
     lv_obj_set_style_text_color(art_placeholder, COL_TEXT2, 0);
     lv_obj_align(art_placeholder, LV_ALIGN_CENTER, 15, 0);  // +15px: center of art at x=240, center of panel at x=225
 
-    // Album name overlaid at bottom of art image
-    lbl_album = lv_label_create(panel_art);
-    lv_obj_set_width(lbl_album, 400);
-    lv_label_set_long_mode(lbl_album, LV_LABEL_LONG_SCROLL_CIRCULAR);
-    lv_label_set_text(lbl_album, "");
-    lv_obj_set_style_text_color(lbl_album, COL_TEXT, 0);
-    lv_obj_set_style_text_font(lbl_album, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_align(lbl_album, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(lbl_album, LV_ALIGN_BOTTOM_MID, 15, -35);  // +15px to center on art, -35px above art bottom
 
     // Lyrics status indicator — top-left corner of art image
     lbl_lyrics_status = lv_label_create(panel_art);
@@ -162,6 +153,15 @@ void createMainScreen() {
     lv_obj_set_style_text_color(ico_fav, COL_TEXT, 0);
     lv_obj_set_style_text_font(ico_fav, &lv_font_montserrat_18, 0);
     lv_obj_center(ico_fav);
+
+    // Album name — below title, above progress bar
+    lbl_album = lv_label_create(panel_right);
+    lv_obj_set_pos(lbl_album, 15, 134);
+    lv_obj_set_width(lbl_album, 270);
+    lv_label_set_long_mode(lbl_album, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_text(lbl_album, "");
+    lv_obj_set_style_text_color(lbl_album, COL_TEXT2, 0);
+    lv_obj_set_style_text_font(lbl_album, &lv_font_montserrat_12, 0);
 
     // ===== PROGRESS BAR =====
     slider_progress = lv_slider_create(panel_right);

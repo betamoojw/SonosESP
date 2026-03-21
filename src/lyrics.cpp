@@ -510,9 +510,9 @@ void createLyricsOverlay(lv_obj_t* parent) {
     // Gradient overlay at bottom of album art — transparent top, semi-opaque black bottom
     lyrics_container = lv_obj_create(parent);
     lv_obj_set_size(lyrics_container, 420, 180);
-    // +15px x: centers container on art image (art center=x240, panel center=x225, diff=15)
-    // -30px y: aligns container bottom with art image bottom (art bottom = panel 480 - 30px margin)
-    lv_obj_align(lyrics_container, LV_ALIGN_BOTTOM_MID, 15, -30);
+    // Left edge = 30px (matches img_album LEFT_MID+30 offset)
+    // Bottom edge = art image bottom (panel 480 - 30px top/bottom margin = y450)
+    lv_obj_align(lyrics_container, LV_ALIGN_BOTTOM_LEFT, 30, -30);
     // Vertical gradient: transparent at top, dark semi-opaque at bottom
     lv_obj_set_style_bg_opa(lyrics_container, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(lyrics_container, lv_color_hex(0x000000), 0);

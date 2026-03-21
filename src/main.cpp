@@ -280,14 +280,24 @@ void setup() {
     if (wifiPrefs.getBool(NVS_KEY_OTA_PENDING, false) && WiFi.status() != WL_CONNECTED) {
         Serial.println("[OTA] Boot OTA pending — waiting for WiFi...");
         lv_obj_t* lbl_ota_wifi = lv_label_create(boot_scr);
-        lv_label_set_text(lbl_ota_wifi, "Waiting for WiFi (OTA pending)...");
         lv_obj_set_style_text_color(lbl_ota_wifi, lv_color_hex(0xD4A84B), 0);
         lv_obj_set_style_text_font(lbl_ota_wifi, &lv_font_montserrat_16, 0);
         lv_obj_align(lbl_ota_wifi, LV_ALIGN_CENTER, 0, 50);
+        lv_label_set_text_fmt(lbl_ota_wifi, "Waiting for WiFi: %s ...", ssid.c_str());
         lv_refr_now(NULL);
         int ota_wifi_tries = 0;
-        while (WiFi.status() != WL_CONNECTED && ota_wifi_tries++ < 60) {  // up to 30s extra
+        while (WiFi.status() != WL_CONNECTED && ota_wifi_tries++ < 120) {  // up to 60s extra
             vTaskDelay(pdMS_TO_TICKS(500));
+            // At 15s: if still not connected, disconnect and retry WiFi.begin()
+            // Handles SDIO/C6 re-init stall after OTA firmware flash + restart
+            if (ota_wifi_tries == 30) {
+                Serial.println("[OTA] WiFi stalled — retrying WiFi.begin()");
+                lv_label_set_text_fmt(lbl_ota_wifi, "Retrying WiFi: %s ...", ssid.c_str());
+                lv_refr_now(NULL);
+                WiFi.disconnect();
+                vTaskDelay(pdMS_TO_TICKS(WIFI_INIT_DELAY_MS));
+                WiFi.begin(ssid.c_str(), pass.c_str());
+            }
         }
         if (WiFi.status() == WL_CONNECTED) {
             Serial.printf("[OTA] WiFi connected — IP: %s\n", WiFi.localIP().toString().c_str());
@@ -295,7 +305,7 @@ void setup() {
             setenv("TZ", CLOCK_ZONES[clock_tz_idx].posix, 1);
             tzset();
         } else {
-            Serial.println("[OTA] WiFi still not connected after extra wait — skipping boot OTA");
+            Serial.println("[OTA] WiFi still not connected after 60s — skipping boot OTA");
             wifiPrefs.putBool(NVS_KEY_OTA_PENDING, false);  // clear flag to avoid infinite reboot loop
         }
         lv_obj_del(lbl_ota_wifi);

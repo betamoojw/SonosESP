@@ -144,7 +144,7 @@ jobs:
           PYEOF
 
       - name: Upload SARIF → GitHub Code Scanning
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: cppcheck.sarif
@@ -200,28 +200,28 @@ jobs:
 
       - name: Run lizard
         run: |
-          # CCN threshold 15: functions above this are too complex to safely change.
-          # Length threshold 100: functions over 100 lines are hard to reason about.
-          # --warnings-only: only print functions that exceed thresholds.
-          lizard src/ include/ \
-            --CCN 15 \
-            --length 100 \
-            --warnings-only \
-            -l cpp \
-            > lizard-warnings.txt 2>&1 || true
-
-          # Also generate full report for the summary
+          # CCN threshold 30: realistic ceiling for LVGL UI-heavy embedded code.
+          # LVGL widget setup inflates CCN via ternaries in style calls — raw
+          # business-logic threshold of 15 produces false positives on this codebase.
+          # Length threshold 200: screen-creation functions are inherently verbose.
+          # --warnings-only removed: not supported by all lizard versions; use awk filter.
           lizard src/ include/ \
             -l cpp \
             --sort cyclomatic_complexity \
             > lizard-full.txt 2>&1 || true
+
+          # Extract violations manually (CCN > 30 OR length > 200)
+          awk 'NR>4 && NF>=6 {
+            ccn=$2+0; length=$6+0;
+            if (ccn > 30 || length > 200) print
+          }' lizard-full.txt > lizard-warnings.txt || true
 
       - name: Job summary
         if: always()
         run: |
           echo "## 🧠 Complexity Analysis (lizard)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Thresholds: **CCN > 15** or **function length > 100 lines**" >> $GITHUB_STEP_SUMMARY
+          echo "Thresholds: **CCN > 30** or **function length > 200 lines**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           if [ -s lizard-warnings.txt ]; then

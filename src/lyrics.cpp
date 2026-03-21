@@ -684,7 +684,10 @@ void updateLyricsStatus() {
     }
 
     if (lyrics_fetching) {
-        lv_label_set_text(lbl_lyrics_status, "Fetching lyrics...");
+        // Animate dots: cycles "Fetching lyrics." → ".." → "..." every 500ms
+        static const char* dot_frames[] = { "Fetching lyrics.", "Fetching lyrics..", "Fetching lyrics..." };
+        int frame = (millis() / 500) % 3;
+        lv_label_set_text(lbl_lyrics_status, dot_frames[frame]);
         lv_obj_set_style_text_color(lbl_lyrics_status, lv_color_hex(0x666666), 0);
     } else if (lyrics_status_msg[0] != '\0' && millis() < lyrics_status_until_ms) {
         // Show result status briefly after fetch completes (5 seconds)

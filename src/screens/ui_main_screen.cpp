@@ -190,10 +190,9 @@ void createMainScreen() {
 
     // ===== PLAYBACK CONTROLS - PERFECTLY CENTERED =====
     // Layout: [shuffle] [prev] [PLAY] [next] [repeat]
-    // Center of 380px panel = 190
-    // Play button at center, others symmetrically placed
+    // Center of 350px panel = 175
 
-    int ctrl_y = 260;
+    int ctrl_y = 265;
     int center_x = 175;
 
     // PLAY button (center) - big white circle with scale effect
@@ -224,7 +223,6 @@ void createMainScreen() {
     lv_obj_set_style_shadow_width(btn_prev, 0, 0);
     lv_obj_set_style_transform_scale_x(btn_prev, 280, LV_STATE_PRESSED);
     lv_obj_set_style_transform_scale_y(btn_prev, 280, LV_STATE_PRESSED);
-    lv_obj_set_style_transform_scale_y(btn_back, 280, LV_STATE_PRESSED);
     lv_obj_set_style_transition(btn_prev, &trans_btn, LV_STATE_PRESSED);
     lv_obj_set_style_transition(btn_prev, &trans_btn, 0);
     lv_obj_add_event_cb(btn_prev, ev_prev, LV_EVENT_CLICKED, NULL);
@@ -243,7 +241,6 @@ void createMainScreen() {
     lv_obj_set_style_shadow_width(btn_next, 0, 0);
     lv_obj_set_style_transform_scale_x(btn_next, 280, LV_STATE_PRESSED);
     lv_obj_set_style_transform_scale_y(btn_next, 280, LV_STATE_PRESSED);
-    lv_obj_set_style_transform_scale_y(btn_back, 280, LV_STATE_PRESSED);
     lv_obj_set_style_transition(btn_next, &trans_btn, LV_STATE_PRESSED);
     lv_obj_set_style_transition(btn_next, &trans_btn, 0);
     lv_obj_add_event_cb(btn_next, ev_next, LV_EVENT_CLICKED, NULL);
@@ -262,7 +259,6 @@ void createMainScreen() {
     lv_obj_set_style_shadow_width(btn_shuffle, 0, 0);
     lv_obj_set_style_transform_scale_x(btn_shuffle, 280, LV_STATE_PRESSED);
     lv_obj_set_style_transform_scale_y(btn_shuffle, 280, LV_STATE_PRESSED);
-    lv_obj_set_style_transform_scale_y(btn_back, 280, LV_STATE_PRESSED);
     lv_obj_set_style_transition(btn_shuffle, &trans_btn, LV_STATE_PRESSED);
     lv_obj_set_style_transition(btn_shuffle, &trans_btn, 0);
     lv_obj_add_event_cb(btn_shuffle, ev_shuffle, LV_EVENT_CLICKED, NULL);
@@ -281,7 +277,6 @@ void createMainScreen() {
     lv_obj_set_style_shadow_width(btn_repeat, 0, 0);
     lv_obj_set_style_transform_scale_x(btn_repeat, 280, LV_STATE_PRESSED);
     lv_obj_set_style_transform_scale_y(btn_repeat, 280, LV_STATE_PRESSED);
-    lv_obj_set_style_transform_scale_y(btn_back, 280, LV_STATE_PRESSED);
     lv_obj_set_style_transition(btn_repeat, &trans_btn, LV_STATE_PRESSED);
     lv_obj_set_style_transition(btn_repeat, &trans_btn, 0);
     lv_obj_add_event_cb(btn_repeat, ev_repeat, LV_EVENT_CLICKED, NULL);
@@ -303,7 +298,6 @@ void createMainScreen() {
     lv_obj_set_style_transform_scale_y(btn_mute, 280, LV_STATE_PRESSED);
     lv_obj_set_style_shadow_width(btn_mute, 0, 0);
     lv_obj_set_style_transform_scale_x(btn_mute, 280, LV_STATE_PRESSED);
-    lv_obj_set_style_transform_scale_y(btn_back, 280, LV_STATE_PRESSED);
     lv_obj_set_style_transition(btn_mute, &trans_btn, LV_STATE_PRESSED);
     lv_obj_set_style_transition(btn_mute, &trans_btn, 0);
     lv_obj_add_event_cb(btn_mute, ev_mute, LV_EVENT_CLICKED, NULL);

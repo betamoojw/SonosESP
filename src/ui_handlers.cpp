@@ -4,6 +4,7 @@
  */
 
 #include "ui_common.h"
+#include <vector>
 #include "config.h"
 #include "lyrics.h"
 #include "clock_screen.h"
@@ -228,9 +229,17 @@ void ev_wifi_scan(lv_event_t* e) {
         lv_label_set_text(lbl_scan_text, LV_SYMBOL_REFRESH "  Scanning...");
     }
 
-    lv_label_set_text(lbl_wifi_status, LV_SYMBOL_REFRESH " Scanning for networks...");
+    lv_label_set_text(lbl_wifi_status, "Scanning for networks...");
     lv_obj_set_style_text_color(lbl_wifi_status, COL_ACCENT, 0);
     lv_obj_clean(list_wifi);
+    // Hide password strip if visible from a previous selection
+    lv_obj_add_flag(pw_strip, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
+    // Show spinner
+    if (spinner_wifi_scan) {
+        lv_obj_remove_flag(spinner_wifi_scan, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(spinner_wifi_scan);
+    }
     lv_timer_handler();  // Update UI immediately
 
     WiFi.disconnect();
@@ -239,13 +248,10 @@ void ev_wifi_scan(lv_event_t* e) {
     int n = WiFi.scanNetworks();
     wifiNetworkCount = min(n, 20);
 
-    // Re-enable button
-    if (btn_wifi_scan) {
-        lv_obj_clear_state(btn_wifi_scan, LV_STATE_DISABLED);
-    }
-    if (lbl_scan_text) {
-        lv_label_set_text(lbl_scan_text, LV_SYMBOL_REFRESH "  Scan");
-    }
+    // Hide spinner, re-enable button
+    if (spinner_wifi_scan) lv_obj_add_flag(spinner_wifi_scan, LV_OBJ_FLAG_HIDDEN);
+    if (btn_wifi_scan)     lv_obj_clear_state(btn_wifi_scan, LV_STATE_DISABLED);
+    if (lbl_scan_text)     lv_label_set_text(lbl_scan_text, LV_SYMBOL_REFRESH " Scan");
 
     if (n == 0) {
         lv_label_set_text(lbl_wifi_status, LV_SYMBOL_WARNING " No networks found");
@@ -262,39 +268,64 @@ void ev_wifi_scan(lv_event_t* e) {
     lv_label_set_text_fmt(lbl_wifi_status, LV_SYMBOL_OK " Found %d network%s", n, n == 1 ? "" : "s");
     lv_obj_set_style_text_color(lbl_wifi_status, lv_color_hex(0x4ECB71), 0);
 
+    // Deduplicate: for mesh networks (same SSID, multiple APs) keep best RSSI only
+    std::vector<int> unique_indices;
     for (int i = 0; i < wifiNetworkCount; i++) {
-        wifiNetworks[i] = WiFi.SSID(i);
+        String ssid = WiFi.SSID(i);
+        int32_t rssi = WiFi.RSSI(i);
+        bool found = false;
+        for (int& j : unique_indices) {
+            if (WiFi.SSID(j) == ssid) {
+                if (rssi > WiFi.RSSI(j)) j = i;  // keep stronger signal
+                found = true;
+                break;
+            }
+        }
+        if (!found) unique_indices.push_back(i);
+    }
+    wifiNetworkCount = min((int)unique_indices.size(), 20);
+
+    for (int ui = 0; ui < wifiNetworkCount; ui++) {
+        int i = unique_indices[ui];
+        wifiNetworks[ui] = WiFi.SSID(i);
         int32_t rssi = WiFi.RSSI(i);
 
+        // Icon color only: green=strong, accent=medium, red=weak
+        lv_color_t icon_color;
+        if      (rssi > -60) icon_color = lv_color_hex(0x4ECB71);
+        else if (rssi > -75) icon_color = COL_ACCENT;
+        else                 icon_color = lv_color_hex(0xFF6B6B);
+
         lv_obj_t* btn = lv_btn_create(list_wifi);
-        lv_obj_set_size(btn, 340, 50);
-        lv_obj_set_user_data(btn, (void*)(intptr_t)i);
+        lv_obj_set_size(btn, lv_pct(100), 50);
+        lv_obj_set_user_data(btn, (void*)(intptr_t)ui);
         lv_obj_set_style_bg_color(btn, COL_CARD, 0);
-        lv_obj_set_style_bg_color(btn, COL_BTN_PRESSED, LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(btn, COL_BTN, LV_STATE_PRESSED);
         lv_obj_set_style_radius(btn, 10, 0);
         lv_obj_set_style_shadow_width(btn, 0, 0);
         lv_obj_add_event_cb(btn, [](lv_event_t* e) {
             int idx = (int)(intptr_t)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
             selectedSSID = wifiNetworks[idx];
-            lv_label_set_text_fmt(lbl_wifi_status, LV_SYMBOL_WIFI " Selected: %s", selectedSSID.c_str());
+            // Show password strip + update SSID label
+            lv_label_set_text(lbl_pw_ssid, selectedSSID.c_str());
+            lv_obj_clear_flag(pw_strip, LV_OBJ_FLAG_HIDDEN);
+            lv_label_set_text_fmt(lbl_wifi_status, LV_SYMBOL_WIFI " %s", selectedSSID.c_str());
             lv_obj_set_style_text_color(lbl_wifi_status, COL_TEXT, 0);
             lv_obj_clear_flag(kb, LV_OBJ_FLAG_HIDDEN);
         }, LV_EVENT_CLICKED, NULL);
 
         lv_obj_t* icon = lv_label_create(btn);
         lv_label_set_text(icon, LV_SYMBOL_WIFI);
-        // Signal strength by color: green=strong, gold=medium, red=weak
-        if (rssi > -50) lv_obj_set_style_text_color(icon, lv_color_hex(0x4ECB71), 0);
-        else if (rssi > -70) lv_obj_set_style_text_color(icon, COL_ACCENT, 0);
-        else lv_obj_set_style_text_color(icon, lv_color_hex(0xFF6B6B), 0);
+        lv_obj_set_style_text_color(icon, icon_color, 0);
         lv_obj_align(icon, LV_ALIGN_LEFT_MID, 10, 0);
 
-        lv_obj_t* ssid = lv_label_create(btn);
-        lv_label_set_text(ssid, wifiNetworks[i].c_str());
-        lv_obj_set_style_text_color(ssid, COL_TEXT, 0);
-        lv_obj_set_width(ssid, 260);
-        lv_label_set_long_mode(ssid, LV_LABEL_LONG_DOT);
-        lv_obj_align(ssid, LV_ALIGN_LEFT_MID, 40, 0);
+        lv_obj_t* ssid_lbl = lv_label_create(btn);
+        lv_label_set_text(ssid_lbl, wifiNetworks[ui].c_str());
+        lv_obj_set_style_text_color(ssid_lbl, COL_TEXT, 0);
+        lv_obj_set_style_text_font(ssid_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_width(ssid_lbl, lv_pct(80));
+        lv_label_set_long_mode(ssid_lbl, LV_LABEL_LONG_DOT);
+        lv_obj_align(ssid_lbl, LV_ALIGN_LEFT_MID, 36, 0);
     }
     WiFi.scanDelete();
 }
@@ -322,9 +353,9 @@ void ev_wifi_connect(lv_event_t* e) {
     vTaskDelay(pdMS_TO_TICKS(100));
     WiFi.begin(selectedSSID.c_str(), pwd);
 
-    // Non-blocking connection with visual feedback (max 15 seconds)
+    // Non-blocking connection with visual feedback (max 30 seconds — mesh/Orbi can be slow)
     int tries = 0;
-    while (WiFi.status() != WL_CONNECTED && tries++ < 30) {
+    while (WiFi.status() != WL_CONNECTED && tries++ < 60) {
         vTaskDelay(pdMS_TO_TICKS(500));
         lv_timer_handler();  // Keep UI responsive
         lv_label_set_text_fmt(lbl_wifi_status, LV_SYMBOL_REFRESH " Connecting to %s%s",
@@ -355,9 +386,7 @@ void ev_wifi_connect(lv_event_t* e) {
 
         String ip = WiFi.localIP().toString();
         lv_label_set_text_fmt(lbl_wifi_status,
-            LV_SYMBOL_OK " Connected!\n"
-            LV_SYMBOL_WIFI " Network: %s\n"
-            LV_SYMBOL_SETTINGS " IP: %s",
+            LV_SYMBOL_WIFI " Connected to %s  (%s)",
             selectedSSID.c_str(), ip.c_str());
         lv_obj_set_style_text_color(lbl_wifi_status, lv_color_hex(0x4ECB71), 0);
 
@@ -375,7 +404,7 @@ void ev_wifi_connect(lv_event_t* e) {
         } else if (status == WL_CONNECTION_LOST) {
             reason = "Connection lost";
         } else if (status == WL_DISCONNECTED) {
-            reason = "Connection timeout - check password";
+            reason = "Connection timeout — check password and try again";
         }
 
         lv_label_set_text_fmt(lbl_wifi_status, LV_SYMBOL_WARNING " Failed: %s", reason);

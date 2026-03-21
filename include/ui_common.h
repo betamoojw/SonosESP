@@ -83,6 +83,7 @@ extern lv_obj_t *list_groups, *lbl_groups_status;
 // WiFi screen elements
 extern lv_obj_t *art_placeholder, *list_wifi, *lbl_wifi_status, *ta_password, *kb;
 extern lv_obj_t *btn_wifi_scan, *btn_wifi_connect, *lbl_scan_text;
+extern lv_obj_t *pw_strip, *lbl_pw_ssid, *spinner_wifi_scan;
 extern lv_obj_t *btn_sonos_scan, *spinner_scan;
 extern lv_obj_t *btn_groups_scan, *spinner_groups_scan;
 

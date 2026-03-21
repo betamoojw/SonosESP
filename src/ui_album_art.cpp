@@ -34,15 +34,13 @@ static uint16_t* sw_jpeg_output = nullptr;
 static int sw_jpeg_width = 0;
 static int sw_jpeg_height = 0;
 
-// ── Pre-connect helpers (SO_RCVBUF BEFORE TCP SYN) ───────────────────────────
+// ── Pre-connect helpers ───────────────────────────────────────────────────────
 // Root cause of pkt_rxbuff :928: server blasts initial TCP cwnd (~10 segments)
-// into C6 pkt_rxbuff before P4 lwIP can ACK. After a storm-gate idle (3s),
-// SDIO DMA may have clock-gated; the wake latency means even 10 segments can
-// overflow the 42-slot buffer pool. Setting SO_RCVBUF AFTER http.GET() is too
-// late — the SYN-ACK has already advertised the 65534-byte default window.
-// Fix: create the socket manually, set SO_RCVBUF=ART_TCP_RCVBUF BEFORE
-// lwip_connect() so the TCP SYN-ACK advertises the constrained window (8192 bytes,
-// ~6 segments max burst). HTTPClient::connect() reuses the pre-connected socket
+// into C6 pkt_rxbuff before P4 lwIP can ACK. SO_RCVBUF does NOT control the
+// TCP window advertisement (pcb->rcv_wnd = 65534 baked into pre-compiled liblwip.a).
+// Setting SO_RCVBUF constrains the app-layer recv buffer, which gradually reduces
+// the advertised window as the buffer fills — limiting subsequent bursts but NOT
+// the initial cwnd blast. HTTPClient::connect() reuses the pre-connected socket
 // instead of reconnecting (it checks connected() first — returns true).
 
 // Parse "http://HOST:PORT/PATH" URL. Fills host_buf, *port_out. Returns true on success.
@@ -84,8 +82,8 @@ static WiFiClient artPreConnectHTTP(const char* url, int timeout_ms) {
     int sockfd = lwip_socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) { freeaddrinfo(res); return WiFiClient(); }
 
-    // KEY: set SO_RCVBUF BEFORE lwip_connect() so the TCP SYN-ACK advertises
-    // ART_TCP_RCVBUF as the receive window → server limited to ~6 segments/burst.
+    // Set SO_RCVBUF before connect — constrains app recv buffer → limits subsequent
+    // window updates after the initial cwnd burst (does not affect SYN-ACK window).
     int rcvbuf = ART_TCP_RCVBUF;
     lwip_setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 
@@ -1056,14 +1054,54 @@ void albumArtTask(void* param) {
                                   (unsigned)dma_snap, (unsigned)ART_MIN_DMA_PRE_BURST,
                                   (unsigned)(largest / 1024), dma_fail_count);
                     if (dma_fail_count >= 3) {
-                        // DMA permanently depleted — restart to restore ~115KB DMA.
-                        // Clear flag FIRST so polling fires SOAPs during the 3s flush wait,
-                        // keeping SDIO warm and preventing DMA clock-gate before restart.
-                        Serial.printf("[ART] DMA low x%d (largest=%uKB) — restarting to recover DMA\n",
-                                      dma_fail_count,
-                                      (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_DMA)/1024));
-                        art_download_in_progress = false;  // keep SDIO warm during restart wait
-                        vTaskDelay(pdMS_TO_TICKS(3000));  // let serial flush + SDIO settle
+                        // DMA depleted (WiFi dynamic RX buffers don't release after heavy downloads).
+                        // Try WiFi stop+reconnect first — esp_wifi_stop() releases all dynamic RX
+                        // buffers (~51KB max at 32 buffers × 1.6KB), potentially recovering DMA
+                        // without a full reboot. Fall back to esp_restart() only if still low.
+                        Serial.printf("[ART] DMA low x%d — attempting WiFi reconnect recovery\n",
+                                      dma_fail_count);
+                        art_download_in_progress = false;  // keep SDIO warm during recovery
+
+                        // Stop WiFi: releases dynamic RX buffer pool back to DMA heap
+                        WiFi.disconnect(true);             // true → calls esp_wifi_stop()
+                        vTaskDelay(pdMS_TO_TICKS(2000));   // allow DMA to drain
+
+                        size_t dma_after = heap_caps_get_free_size(MALLOC_CAP_DMA);
+                        Serial.printf("[ART] DMA after WiFi stop: %u (was %u)\n",
+                                      (unsigned)dma_after, (unsigned)dma_snap);
+
+                        if (dma_after > ART_MIN_DMA_PRE_BURST) {
+                            // Recovery worked — reconnect WiFi using saved credentials
+                            Preferences prefs;
+                            prefs.begin(NVS_NAMESPACE, true);
+                            String ssid = prefs.getString(NVS_KEY_SSID, "");
+                            String pass = prefs.getString(NVS_KEY_PASSWORD, "");
+                            prefs.end();
+
+                            Serial.printf("[ART] DMA recovered — reconnecting WiFi to '%s'\n",
+                                          ssid.c_str());
+                            WiFi.begin(ssid.c_str(), pass.c_str());
+
+                            unsigned long t = millis();
+                            while (WiFi.status() != WL_CONNECTED && millis() - t < 15000) {
+                                vTaskDelay(pdMS_TO_TICKS(500));
+                            }
+
+                            if (WiFi.status() == WL_CONNECTED) {
+                                Serial.printf("[ART] WiFi reconnected — DMA=%u, resuming\n",
+                                              (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA));
+                                dma_fail_count = 0;
+                                dma_fail_url[0] = '\0';
+                                last_art_download_end_ms = millis();
+                                continue;  // retry download without reboot
+                            }
+                            Serial.println("[ART] WiFi reconnect timed out — restarting");
+                        } else {
+                            Serial.printf("[ART] DMA still low after WiFi stop (%u) — restarting\n",
+                                          (unsigned)dma_after);
+                        }
+
+                        vTaskDelay(pdMS_TO_TICKS(1000));  // serial flush
                         esp_restart();
                     } else {
                         // Clear flag so polling keeps SDIO warm during recovery wait.

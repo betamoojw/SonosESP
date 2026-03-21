@@ -507,23 +507,27 @@ void clearLyrics() {
 }
 
 void createLyricsOverlay(lv_obj_t* parent) {
-    // Semi-transparent container at bottom of album art
+    // Gradient overlay at bottom of album art — transparent top, semi-opaque black bottom
     lyrics_container = lv_obj_create(parent);
-    lv_obj_set_size(lyrics_container, 420, 140);
-    lv_obj_align(lyrics_container, LV_ALIGN_BOTTOM_MID, 0, -24);  // Adjusted to prevent overlap
+    lv_obj_set_size(lyrics_container, 420, 180);
+    // Centered in 450px panel (x=15), bottom aligned with art bottom (y=270..450)
+    lv_obj_align(lyrics_container, LV_ALIGN_BOTTOM_MID, 0, -30);
+    // Vertical gradient: transparent at top, dark semi-opaque at bottom
+    lv_obj_set_style_bg_opa(lyrics_container, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(lyrics_container, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(lyrics_container, 180, 0);
+    lv_obj_set_style_bg_grad_color(lyrics_container, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_grad_dir(lyrics_container, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_main_opa(lyrics_container, LV_OPA_TRANSP, 0);   // top: transparent
+    lv_obj_set_style_bg_grad_opa(lyrics_container, 245, 0);              // bottom: ~96% opaque
     lv_obj_set_style_border_width(lyrics_container, 0, 0);
-    lv_obj_set_style_border_opa(lyrics_container, 0, 0);      // Force no border
     lv_obj_set_style_outline_width(lyrics_container, 0, 0);
-    lv_obj_set_style_outline_opa(lyrics_container, 0, 0);     // Force no outline
-    lv_obj_set_style_shadow_width(lyrics_container, 0, 0);    // No shadow
-    lv_obj_set_style_shadow_opa(lyrics_container, 0, 0);      // Force no shadow
-    lv_obj_set_style_radius(lyrics_container, 0, 0);
-    lv_obj_set_style_pad_top(lyrics_container, 8, 0);
-    lv_obj_set_style_pad_bottom(lyrics_container, 4, 0);      // Small padding to avoid edge artifact
-    lv_obj_set_style_pad_left(lyrics_container, 8, 0);
-    lv_obj_set_style_pad_right(lyrics_container, 8, 0);
+    lv_obj_set_style_shadow_width(lyrics_container, 0, 0);
+    lv_obj_set_style_radius(lyrics_container, 24, 0);     // match album art corner radius
+    lv_obj_set_style_clip_corner(lyrics_container, true, 0);
+    lv_obj_set_style_pad_top(lyrics_container, 24, 0);    // extra top pad — fades into art
+    lv_obj_set_style_pad_bottom(lyrics_container, 12, 0);
+    lv_obj_set_style_pad_left(lyrics_container, 12, 0);
+    lv_obj_set_style_pad_right(lyrics_container, 12, 0);
     lv_obj_clear_flag(lyrics_container, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(lyrics_container, LV_SCROLLBAR_MODE_OFF);
 
@@ -531,50 +535,74 @@ void createLyricsOverlay(lv_obj_t* parent) {
     lv_obj_set_flex_flow(lyrics_container, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(lyrics_container, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    // Previous line (dimmed, scroll if too long)
+    // Previous line — dimmed
     lbl_lyric_prev = lv_label_create(lyrics_container);
     lv_label_set_text(lbl_lyric_prev, "");
-    lv_obj_set_width(lbl_lyric_prev, 400);
-    lv_obj_set_style_text_font(lbl_lyric_prev, &lv_font_montserrat_14, 0);  // Smaller size
-    lv_obj_set_style_text_color(lbl_lyric_prev, lv_color_hex(0x888888), 0);
+    lv_obj_set_width(lbl_lyric_prev, 396);
+    lv_obj_set_style_text_font(lbl_lyric_prev, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_lyric_prev, lv_color_hex(0xAAAAAA), 0);
     lv_obj_set_style_text_align(lbl_lyric_prev, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_long_mode(lbl_lyric_prev, LV_LABEL_LONG_SCROLL_CIRCULAR);  // Scroll effect
+    lv_label_set_long_mode(lbl_lyric_prev, LV_LABEL_LONG_SCROLL_CIRCULAR);
 
-    // Current line (bright, BIGGER, scroll if too long)
+    // Current line — bright, larger
     lbl_lyric_current = lv_label_create(lyrics_container);
     lv_label_set_text(lbl_lyric_current, "");
-    lv_obj_set_width(lbl_lyric_current, 400);
-    lv_obj_set_style_text_font(lbl_lyric_current, &lv_font_montserrat_20, 0);  // BIGGER for current!
+    lv_obj_set_width(lbl_lyric_current, 396);
+    lv_obj_set_style_text_font(lbl_lyric_current, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(lbl_lyric_current, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_align(lbl_lyric_current, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_long_mode(lbl_lyric_current, LV_LABEL_LONG_SCROLL_CIRCULAR);  // Scroll effect
+    lv_label_set_long_mode(lbl_lyric_current, LV_LABEL_LONG_SCROLL_CIRCULAR);
 
-    // Next line (dimmed, scroll if too long)
+    // Next line — dimmed
     lbl_lyric_next = lv_label_create(lyrics_container);
     lv_label_set_text(lbl_lyric_next, "");
-    lv_obj_set_width(lbl_lyric_next, 400);
-    lv_obj_set_style_text_font(lbl_lyric_next, &lv_font_montserrat_14, 0);  // Smaller size
-    lv_obj_set_style_text_color(lbl_lyric_next, lv_color_hex(0x888888), 0);
+    lv_obj_set_width(lbl_lyric_next, 396);
+    lv_obj_set_style_text_font(lbl_lyric_next, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_lyric_next, lv_color_hex(0xAAAAAA), 0);
     lv_obj_set_style_text_align(lbl_lyric_next, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_long_mode(lbl_lyric_next, LV_LABEL_LONG_SCROLL_CIRCULAR);  // Scroll effect
+    lv_label_set_long_mode(lbl_lyric_next, LV_LABEL_LONG_SCROLL_CIRCULAR);
 
     // Start hidden
     lv_obj_add_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN);
 }
 
-// Animation callback for fade effect
 static void lyrics_fade_cb(void* var, int32_t v) {
-    if (lyrics_container) {
-        lv_obj_set_style_opa(lyrics_container, v, 0);
-    }
+    lv_obj_t* obj = (lv_obj_t*)var;
+    if (obj) lv_obj_set_style_opa(obj, (lv_opa_t)v, 0);
+}
+
+// Fade-out complete: hide the container
+static void lyrics_fadeout_done_cb(lv_anim_t* a) {
+    lv_obj_t* obj = (lv_obj_t*)a->var;
+    if (obj) lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+}
+
+// Smooth 300ms fade-out then hide
+static void lyricsHide() {
+    if (!lyrics_container || lv_obj_has_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN)) return;
+    lv_anim_t anim;
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, lyrics_container);
+    lv_anim_set_values(&anim, lv_obj_get_style_opa(lyrics_container, LV_PART_MAIN), LV_OPA_TRANSP);
+    lv_anim_set_duration(&anim, 300);
+    lv_anim_set_exec_cb(&anim, lyrics_fade_cb);
+    lv_anim_set_path_cb(&anim, lv_anim_path_ease_in);
+    lv_anim_set_completed_cb(&anim, lyrics_fadeout_done_cb);
+    lv_anim_start(&anim);
+}
+
+// Instant show — cancel any fade-out, snap to full opacity
+static void lyricsShow() {
+    if (!lyrics_container) return;
+    lv_anim_del(lyrics_container, lyrics_fade_cb);
+    lv_obj_remove_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_opa(lyrics_container, LV_OPA_COVER, 0);
 }
 
 void updateLyricsDisplay(int position_seconds) {
     if (!lyrics_container || !lyric_lines) return;  // Check buffer allocated
     if (!lyrics_ready || !lyrics_enabled || lyric_count == 0) {
-        if (!lv_obj_has_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN)) {
-            lv_obj_add_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN);
-        }
+        lyricsHide();
         return;
     }
 
@@ -590,74 +618,55 @@ void updateLyricsDisplay(int position_seconds) {
         }
     }
 
-    // No line yet (before first lyric) - hide container
+    // No line yet (before first lyric)
     if (idx < 0) {
-        if (!lv_obj_has_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN)) {
-            lv_obj_add_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN);
-        }
+        lyricsHide();
         return;
     }
 
-    // Auto-hide logic: Hide lyrics 10 seconds after current line if there's a gap before next line
     int time_since_current = pos_ms - lyric_lines[idx].time_ms;
 
-    // Check if we're past the last lyric (more than 3 seconds after) - hide container
-    if (idx == lyric_count - 1) {  // On last lyric
-        if (time_since_current > 3000) {  // 3 seconds after last lyric
-            if (!lv_obj_has_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN)) {
-                lv_obj_add_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN);
-            }
-            return;
-        }
-    } else {
-        // Check if next lyric is more than 10 seconds away
+    // Past last lyric by 3 seconds — fade out
+    if (idx == lyric_count - 1 && time_since_current > 3000) {
+        lyricsHide();
+        return;
+    }
+
+    // Long gap before next lyric (10s shown, next still far) — fade out
+    if (idx < lyric_count - 1) {
         int time_to_next = lyric_lines[idx + 1].time_ms - pos_ms;
-
-        // If we've shown current lyric for 10+ seconds AND next lyric is still far away, hide
         if (time_since_current >= 10000 && time_to_next > 0) {
-            if (!lv_obj_has_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN)) {
-                lv_obj_add_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN);
-            }
+            lyricsHide();
             return;
         }
     }
 
-    // Show container if hidden
-    if (lv_obj_has_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN)) {
-        lv_obj_remove_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_style_opa(lyrics_container, 255, 0);
-    }
+    // Instant snap-in — cancel any ongoing fade-out
+    lyricsShow();
 
-    // Only update when line changes
+    // Only update text when line changes
     if (idx == current_lyric_index) return;
 
-    int prev_index = current_lyric_index;
     current_lyric_index = idx;
 
-    // Update text
+    // Snap text instantly (no fade-in on line change)
     lv_label_set_text(lbl_lyric_prev, idx > 0 ? lyric_lines[idx - 1].text : "");
     lv_label_set_text(lbl_lyric_current, lyric_lines[idx].text);
     lv_label_set_text(lbl_lyric_next, idx < lyric_count - 1 ? lyric_lines[idx + 1].text : "");
 
-    // Fade animation on line change
-    if (prev_index >= 0) {
-        lv_anim_t anim;
-        lv_anim_init(&anim);
-        lv_anim_set_var(&anim, lyrics_container);
-        lv_anim_set_values(&anim, 150, 255);
-        lv_anim_set_duration(&anim, 150);
-        lv_anim_set_exec_cb(&anim, lyrics_fade_cb);
-        lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
-        lv_anim_start(&anim);
-    }
-
-    // Color current line with brightened dominant color (brighter than progress bar)
+    // Color current line with vivid dominant color: normalize to max=255, then floor at 200
     uint8_t r = (dominant_color >> 16) & 0xFF;
     uint8_t g = (dominant_color >> 8) & 0xFF;
     uint8_t b = dominant_color & 0xFF;
-    r = (uint8_t)max(min((int)r * 4, 255), 120);  // Brighter: 4x multiplier, floor 120
-    g = (uint8_t)max(min((int)g * 4, 255), 120);
-    b = (uint8_t)max(min((int)b * 4, 255), 120);
+    int max_ch = max({(int)r, (int)g, (int)b});
+    if (max_ch > 0) {
+        r = (uint8_t)min(255, (int)r * 255 / max_ch);
+        g = (uint8_t)min(255, (int)g * 255 / max_ch);
+        b = (uint8_t)min(255, (int)b * 255 / max_ch);
+    }
+    r = max(r, (uint8_t)200);
+    g = max(g, (uint8_t)200);
+    b = max(b, (uint8_t)200);
     lv_obj_set_style_text_color(lbl_lyric_current, lv_color_make(r, g, b), 0);
 }
 
@@ -681,7 +690,10 @@ void updateLyricsStatus() {
     }
 
     if (lyrics_fetching) {
-        lv_label_set_text(lbl_lyrics_status, "Fetching lyrics...");
+        // Animate dots: cycles "Fetching lyrics." → ".." → "..." every 500ms
+        static const char* dot_frames[] = { "Fetching lyrics.", "Fetching lyrics..", "Fetching lyrics..." };
+        int frame = (millis() / 500) % 3;
+        lv_label_set_text(lbl_lyrics_status, dot_frames[frame]);
         lv_obj_set_style_text_color(lbl_lyrics_status, lv_color_hex(0x666666), 0);
     } else if (lyrics_status_msg[0] != '\0' && millis() < lyrics_status_until_ms) {
         // Show result status briefly after fetch completes (5 seconds)

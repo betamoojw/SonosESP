@@ -268,7 +268,7 @@
                                             // Song 2+ DMA floor 38-42KB: burst 16KB → dl-start 22-26KB >> 16KB ✓
                                             // Crash scenario: dl-start 22KB > 16KB passes → mid-read check at 8KB
                                             // catches the WiFi-alloc drop → aborts before :928.
-#define ART_MIN_FREE_DMA             8000   // Min DMA before art pre-connect (DMA wait loop gate — vestigial).
+#define ART_MIN_FREE_DMA             8000   // Referenced in boot memory map log only (not a download gate).
 #define ART_MIN_DMA_PRE_BURST       20000   // Min DMA before http.GET() (BEFORE burst arrives).
                                             // Session DMA depletion: ~10KB permanent loss per art download
                                             // (WiFi dynamic RX buffer accumulation — platform-level, unfixable in app).

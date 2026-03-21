@@ -34,15 +34,13 @@ static uint16_t* sw_jpeg_output = nullptr;
 static int sw_jpeg_width = 0;
 static int sw_jpeg_height = 0;
 
-// ── Pre-connect helpers (SO_RCVBUF BEFORE TCP SYN) ───────────────────────────
+// ── Pre-connect helpers ───────────────────────────────────────────────────────
 // Root cause of pkt_rxbuff :928: server blasts initial TCP cwnd (~10 segments)
-// into C6 pkt_rxbuff before P4 lwIP can ACK. After a storm-gate idle (3s),
-// SDIO DMA may have clock-gated; the wake latency means even 10 segments can
-// overflow the 42-slot buffer pool. Setting SO_RCVBUF AFTER http.GET() is too
-// late — the SYN-ACK has already advertised the 65534-byte default window.
-// Fix: create the socket manually, set SO_RCVBUF=ART_TCP_RCVBUF BEFORE
-// lwip_connect() so the TCP SYN-ACK advertises the constrained window (8192 bytes,
-// ~6 segments max burst). HTTPClient::connect() reuses the pre-connected socket
+// into C6 pkt_rxbuff before P4 lwIP can ACK. SO_RCVBUF does NOT control the
+// TCP window advertisement (pcb->rcv_wnd = 65534 baked into pre-compiled liblwip.a).
+// Setting SO_RCVBUF constrains the app-layer recv buffer, which gradually reduces
+// the advertised window as the buffer fills — limiting subsequent bursts but NOT
+// the initial cwnd blast. HTTPClient::connect() reuses the pre-connected socket
 // instead of reconnecting (it checks connected() first — returns true).
 
 // Parse "http://HOST:PORT/PATH" URL. Fills host_buf, *port_out. Returns true on success.
@@ -84,8 +82,8 @@ static WiFiClient artPreConnectHTTP(const char* url, int timeout_ms) {
     int sockfd = lwip_socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) { freeaddrinfo(res); return WiFiClient(); }
 
-    // KEY: set SO_RCVBUF BEFORE lwip_connect() so the TCP SYN-ACK advertises
-    // ART_TCP_RCVBUF as the receive window → server limited to ~6 segments/burst.
+    // Set SO_RCVBUF before connect — constrains app recv buffer → limits subsequent
+    // window updates after the initial cwnd burst (does not affect SYN-ACK window).
     int rcvbuf = ART_TCP_RCVBUF;
     lwip_setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 

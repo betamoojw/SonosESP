@@ -510,7 +510,9 @@ void createLyricsOverlay(lv_obj_t* parent) {
     // Gradient overlay at bottom of album art — transparent top, semi-opaque black bottom
     lyrics_container = lv_obj_create(parent);
     lv_obj_set_size(lyrics_container, 420, 180);
-    lv_obj_align(lyrics_container, LV_ALIGN_BOTTOM_MID, 0, 0);
+    // +15px x: centers container on art image (art center=x240, panel center=x225, diff=15)
+    // -30px y: aligns container bottom with art image bottom (art bottom = panel 480 - 30px margin)
+    lv_obj_align(lyrics_container, LV_ALIGN_BOTTOM_MID, 15, -30);
     // Vertical gradient: transparent at top, dark semi-opaque at bottom
     lv_obj_set_style_bg_opa(lyrics_container, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(lyrics_container, lv_color_hex(0x000000), 0);
@@ -565,19 +567,44 @@ void createLyricsOverlay(lv_obj_t* parent) {
     lv_obj_add_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN);
 }
 
-// Animation callback for fade effect
+// Fade animation exec callback
 static void lyrics_fade_cb(void* var, int32_t v) {
-    if (lyrics_container) {
-        lv_obj_set_style_opa(lyrics_container, v, 0);
-    }
+    lv_obj_t* obj = (lv_obj_t*)var;
+    if (obj) lv_obj_set_style_opa(obj, (lv_opa_t)v, 0);
+}
+
+// Fade-out complete: hide the container
+static void lyrics_fadeout_done_cb(lv_anim_t* a) {
+    lv_obj_t* obj = (lv_obj_t*)a->var;
+    if (obj) lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+}
+
+// Smooth fade-out then hide
+static void lyricsHide() {
+    if (!lyrics_container || lv_obj_has_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN)) return;
+    lv_anim_t anim;
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, lyrics_container);
+    lv_anim_set_values(&anim, lv_obj_get_style_opa(lyrics_container, LV_PART_MAIN), LV_OPA_TRANSP);
+    lv_anim_set_duration(&anim, 300);
+    lv_anim_set_exec_cb(&anim, lyrics_fade_cb);
+    lv_anim_set_path_cb(&anim, lv_anim_path_ease_in);
+    lv_anim_set_completed_cb(&anim, lyrics_fadeout_done_cb);
+    lv_anim_start(&anim);
+}
+
+// Instant show — cancel any fade-out, snap to full opacity
+static void lyricsShow() {
+    if (!lyrics_container) return;
+    lv_anim_del(lyrics_container, lyrics_fade_cb);
+    lv_obj_remove_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_opa(lyrics_container, LV_OPA_COVER, 0);
 }
 
 void updateLyricsDisplay(int position_seconds) {
     if (!lyrics_container || !lyric_lines) return;  // Check buffer allocated
     if (!lyrics_ready || !lyrics_enabled || lyric_count == 0) {
-        if (!lv_obj_has_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN)) {
-            lv_obj_add_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN);
-        }
+        lyricsHide();
         return;
     }
 
@@ -593,66 +620,41 @@ void updateLyricsDisplay(int position_seconds) {
         }
     }
 
-    // No line yet (before first lyric) - hide container
+    // No line yet (before first lyric)
     if (idx < 0) {
-        if (!lv_obj_has_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN)) {
-            lv_obj_add_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN);
-        }
+        lyricsHide();
         return;
     }
 
-    // Auto-hide logic: Hide lyrics 10 seconds after current line if there's a gap before next line
     int time_since_current = pos_ms - lyric_lines[idx].time_ms;
 
-    // Check if we're past the last lyric (more than 3 seconds after) - hide container
-    if (idx == lyric_count - 1) {  // On last lyric
-        if (time_since_current > 3000) {  // 3 seconds after last lyric
-            if (!lv_obj_has_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN)) {
-                lv_obj_add_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN);
-            }
-            return;
-        }
-    } else {
-        // Check if next lyric is more than 10 seconds away
+    // Past last lyric by 3 seconds — fade out
+    if (idx == lyric_count - 1 && time_since_current > 3000) {
+        lyricsHide();
+        return;
+    }
+
+    // Long gap before next lyric (10s shown, next still far) — fade out
+    if (idx < lyric_count - 1) {
         int time_to_next = lyric_lines[idx + 1].time_ms - pos_ms;
-
-        // If we've shown current lyric for 10+ seconds AND next lyric is still far away, hide
         if (time_since_current >= 10000 && time_to_next > 0) {
-            if (!lv_obj_has_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN)) {
-                lv_obj_add_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN);
-            }
+            lyricsHide();
             return;
         }
     }
 
-    // Show container if hidden
-    if (lv_obj_has_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN)) {
-        lv_obj_remove_flag(lyrics_container, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_style_opa(lyrics_container, 255, 0);
-    }
+    // Show instantly — cancel any ongoing fade-out
+    lyricsShow();
 
-    // Only update when line changes
+    // Only update text when line changes
     if (idx == current_lyric_index) return;
 
-    int prev_index = current_lyric_index;
     current_lyric_index = idx;
 
-    // Update text
+    // Snap text to new line (no fade-in — instant feel)
     lv_label_set_text(lbl_lyric_prev, idx > 0 ? lyric_lines[idx - 1].text : "");
     lv_label_set_text(lbl_lyric_current, lyric_lines[idx].text);
     lv_label_set_text(lbl_lyric_next, idx < lyric_count - 1 ? lyric_lines[idx + 1].text : "");
-
-    // Fade animation on line change
-    if (prev_index >= 0) {
-        lv_anim_t anim;
-        lv_anim_init(&anim);
-        lv_anim_set_var(&anim, lyrics_container);
-        lv_anim_set_values(&anim, 150, 255);
-        lv_anim_set_duration(&anim, 150);
-        lv_anim_set_exec_cb(&anim, lyrics_fade_cb);
-        lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
-        lv_anim_start(&anim);
-    }
 
     // Color current line with brightened dominant color (brighter than progress bar)
     uint8_t r = (dominant_color >> 16) & 0xFF;

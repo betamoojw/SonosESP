@@ -467,8 +467,8 @@ void createBrowseScreen() {
 
         searchPos = endPos + (isContainer ? 12 : 7);
         itemCount++;
-        if (itemCount >= 20) {
-            Serial.printf("[BROWSE] Reached 20 item limit, stopping\n");
+        if (itemCount >= 100) {
+            Serial.printf("[BROWSE] Reached 100 item limit, stopping\n");
             break;
         }
     }

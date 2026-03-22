@@ -1001,14 +1001,15 @@ void SonosController::notifyUI(UIUpdateType_e type) {
 }
 
 // Helper: Detect if URI is a radio station
-// Based on research: x-sonosapi-stream:, x-rincon-mp3radio:, x-sonosapi-radio:, aac://, hls-radio:
+// Based on research: x-sonosapi-stream:, x-rincon-mp3radio:, x-sonosapi-radio:, hls-radio:
 // x-sonosapi-hls: = BBC Sounds live radio (NOT x-sonosapi-hls-static: which is on-demand podcasts)
+// NOTE: aac:// is intentionally NOT here — Apple Music tracks also use aac:// URIs when played
+// from a queue. Radio detection for aac:// is handled at the call site using queueSize.
 static bool isRadioURI(const String& uri) {
     return uri.startsWith("x-sonosapi-stream:") ||
            uri.startsWith("x-rincon-mp3radio:") ||
            uri.startsWith("x-sonosapi-radio:") ||
            uri.startsWith("x-sonosapi-hls:") ||
-           uri.startsWith("aac://") ||
            uri.startsWith("hls-radio:");
 }
 
@@ -1079,7 +1080,10 @@ bool SonosController::updateTrackInfo() {
         // Extract TrackURI and detect radio
         String trackURI = extractXML(resp, "TrackURI");
         dev->currentURI = trackURI;
-        dev->isRadioStation = isRadioURI(trackURI);
+        // aac:// is used by both live AAC radio streams AND Apple Music/streaming service
+        // tracks played from a queue. Treat as radio only when the queue is empty.
+        dev->isRadioStation = isRadioURI(trackURI) ||
+                              (trackURI.startsWith("aac://") && dev->queueSize == 0);
 
         // Get metadata and decode HTML entities
         String meta = extractXML(resp, "TrackMetaData");

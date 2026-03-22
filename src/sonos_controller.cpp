@@ -719,8 +719,14 @@ String SonosController::browseContent(const char* objectID, int startIndex, int 
 
     String resp = sendSOAP("ContentDirectory", "Browse", args);
 
-    // Extract and decode DIDL
+    // Extract and decode DIDL. Auto-retry once on empty response (HTTP 500 transient).
     String didl = extractXML(resp, "Result");
+    if (didl.length() == 0 && resp.length() == 0) {
+        Serial.printf("[BROWSE] Empty response for %s — retrying\n", objectID);
+        vTaskDelay(pdMS_TO_TICKS(500));
+        resp = sendSOAP("ContentDirectory", "Browse", args);
+        didl = extractXML(resp, "Result");
+    }
     didl = decodeHTMLEntities(didl);
 
     return didl;
@@ -833,8 +839,24 @@ bool SonosController::playPlaylist(const char* playlistID, const char* title) {
             "<CurrentURIMetaData></CurrentURIMetaData>",
             queueURI);
 
+        // 3-retry loop: SetAVTransportURI can return HTTP 500 when Sonos is still
+        // processing the AddURIToQueue expansion internally (radio → queue transition).
+        // Identical pattern to AddURIToQueue retry above.
+        String setResp;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            setResp = sendSOAP("AVTransport", "SetAVTransportURI", setArgs);
+            if (setResp.length() > 0 && setResp.indexOf("Fault") < 0) {
+                break;
+            }
+            Serial.printf("[PLAYLIST] SetAVTransportURI attempt %d failed, retrying\n", attempt + 1);
+            vTaskDelay(pdMS_TO_TICKS(400));
+        }
+        if (setResp.length() == 0 || setResp.indexOf("Fault") >= 0) {
+            Serial.println("[PLAYLIST] Failed to set transport URI");
+            return false;
+        }
+
         Serial.println("[PLAYLIST] Playlist loaded and playing");
-        sendSOAP("AVTransport", "SetAVTransportURI", setArgs);
         vTaskDelay(pdMS_TO_TICKS(100));
         sendSOAP("AVTransport", "Play", "<InstanceID>0</InstanceID><Speed>1</Speed>");
         vTaskDelay(pdMS_TO_TICKS(300));

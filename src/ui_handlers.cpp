@@ -353,15 +353,19 @@ void ev_wifi_connect(lv_event_t* e) {
     vTaskDelay(pdMS_TO_TICKS(100));
     WiFi.begin(selectedSSID.c_str(), pwd);
 
-    // Non-blocking connection with visual feedback (max 30 seconds — mesh/Orbi can be slow)
+    // Non-blocking connection with visual feedback (max 30 seconds — mesh/Orbi can be slow).
+    // MUST reset the hardware WDT each iteration: this function runs on mainAppTask which is
+    // registered with the 30s WDT. The loop itself takes up to 30s → WDT fires at loop end.
     int tries = 0;
     while (WiFi.status() != WL_CONNECTED && tries++ < 60) {
+        esp_task_wdt_reset();  // Feed WDT — loop runs up to 30s, WDT timeout = 30s
         vTaskDelay(pdMS_TO_TICKS(500));
         lv_timer_handler();  // Keep UI responsive
         lv_label_set_text_fmt(lbl_wifi_status, LV_SYMBOL_REFRESH " Connecting to %s%s",
             selectedSSID.c_str(),
             tries % 4 == 0 ? "..." : tries % 4 == 1 ? ".  " : tries % 4 == 2 ? ".. " : " ..");
     }
+    esp_task_wdt_reset();  // Reset after loop exits (NVS write below can take ~100ms)
 
     // Re-enable button
     if (btn_wifi_connect) {

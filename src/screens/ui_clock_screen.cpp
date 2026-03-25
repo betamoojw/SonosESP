@@ -138,10 +138,21 @@ static const char* wmoCondition(int code) {
 #define WI_SUNRISE           "\xEF\x81\x91"   // U+F051  wi-sunrise
 #define WI_SUNSET            "\xEF\x81\x92"   // U+F052  wi-sunset
 
-static const char* wmoGlyph(int code) {
-    if (code == 0)  return WI_DAY_SUNNY;
-    if (code == 1)  return WI_DAY_CLOUDY_HIGH;
-    if (code == 2)  return WI_DAY_CLOUDY;
+// Returns true if the given hour (0–23) falls outside sunrise..sunset.
+// Parses clock_wx_sunrise / clock_wx_sunset ("HH:MM") — defaults to 6h/20h if not set.
+static bool isNightHour(int hour) {
+    int rise_h = 6, set_h = 20;
+    if (clock_wx_sunrise[0] >= '0' && clock_wx_sunrise[0] <= '2')
+        rise_h = (clock_wx_sunrise[0] - '0') * 10 + (clock_wx_sunrise[1] - '0');
+    if (clock_wx_sunset[0] >= '0' && clock_wx_sunset[0] <= '2')
+        set_h  = (clock_wx_sunset[0]  - '0') * 10 + (clock_wx_sunset[1]  - '0');
+    return (hour < rise_h || hour >= set_h);
+}
+
+static const char* wmoGlyph(int code, bool night = false) {
+    if (code == 0)  return night ? WI_NIGHT_CLEAR       : WI_DAY_SUNNY;
+    if (code == 1)  return night ? WI_NIGHT_CLOUDY_HIGH : WI_DAY_CLOUDY_HIGH;
+    if (code == 2)  return night ? WI_NIGHT_PARTLY      : WI_DAY_CLOUDY;
     if (code == 3)  return WI_CLOUDY;
     if (code <= 48) return WI_FOG;
     if (code <= 55) return WI_SPRINKLE;
@@ -202,10 +213,15 @@ static void applyWeatherToWidgets() {
         lv_label_set_text(clock_wx_cond_lbl, wmoCondition(clock_wx_wmo));
         snprintf(buf, sizeof(buf), "H: %d%%   W: %d km/h", clock_wx_humidity, clock_wx_wind);
         lv_label_set_text(clock_wx_detail_lbl, buf);
-        if (clock_wx_icon) lv_label_set_text(clock_wx_icon, wmoGlyph(clock_wx_wmo));
+        {
+            struct tm _t = {};
+            bool _night = getLocalTime(&_t, 0) ? isNightHour(_t.tm_hour) : false;
+            if (clock_wx_icon) lv_label_set_text(clock_wx_icon, wmoGlyph(clock_wx_wmo, _night));
+        }
         for (int i = 0; i < 6; i++) {
             lv_label_set_text(clock_wx_fc_day[i],  hourLabel(clock_wx_hourly[i].hour));
-            lv_label_set_text(clock_wx_fc_icon[i], wmoGlyph(clock_wx_hourly[i].wmo));
+            lv_label_set_text(clock_wx_fc_icon[i], wmoGlyph(clock_wx_hourly[i].wmo,
+                                                             isNightHour(clock_wx_hourly[i].hour)));
             snprintf(buf, sizeof(buf), "%d%s", clock_wx_hourly[i].temp, tempUnit());
             lv_label_set_text(clock_wx_fc_temp[i], buf);
         }

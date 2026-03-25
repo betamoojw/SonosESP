@@ -267,6 +267,10 @@ extern int            clock_wx_wmo;           // Current WMO weather code
 extern ClockWxHour    clock_wx_hourly[6];     // Next 6 hours forecast
 extern char          clock_wx_city_name[64]; // Display city name (from ip-api or ClockCity label)
 extern bool          clock_wx_valid;               // true = data received at least once
+extern int           clock_wx_uv;                  // UV index 0–11+
+extern int           clock_wx_apparent;            // Feels-like temperature (same unit as clock_wx_temp)
+extern char          clock_wx_sunrise[8];          // "HH:MM\0" local sunrise time
+extern char          clock_wx_sunset[8];           // "HH:MM\0" local sunset time
 extern volatile bool clock_weather_updated;        // Set by bg task, cleared by tick callback
 extern volatile bool clock_weather_needs_refetch;  // Set by settings; bg task re-fetches immediately
 

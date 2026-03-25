@@ -209,6 +209,10 @@ int           clock_wx_wmo      = 0;
 ClockWxHour   clock_wx_hourly[6] = {};
 char          clock_wx_city_name[64] = "";
 bool          clock_wx_valid    = false;
+int           clock_wx_uv       = 0;
+int           clock_wx_apparent = 0;
+char          clock_wx_sunrise[8] = "--:--";
+char          clock_wx_sunset[8]  = "--:--";
 volatile bool clock_weather_updated       = false;
 volatile bool clock_weather_needs_refetch = false;
 

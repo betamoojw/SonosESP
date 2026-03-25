@@ -1039,15 +1039,10 @@ void albumArtTask(void* param) {
                 Serial.printf("[ART/flag-set] MEM: heap=%u dma=%u psram=%u stk=%u\n",
                     heap_caps_get_free_size(MALLOC_CAP_DEFAULT), (unsigned)dma_snap,
                     heap_caps_get_free_size(MALLOC_CAP_SPIRAM), uxTaskGetStackHighWaterMark(NULL));
+                // Count consecutive DMA-too-low aborts across ANY URL.
+                // Per-URL tracking was wrong: new song = new URL = counter reset = WiFi recovery never fires.
+                static int dma_fail_count = 0;
                 if (dma_snap < ART_MIN_DMA_PRE_BURST) {
-                    // Count consecutive failures for this URL.
-                    static char dma_fail_url[512] = "";
-                    static int  dma_fail_count    = 0;
-                    if (strncmp(dma_fail_url, url, sizeof(dma_fail_url) - 1) != 0) {
-                        strncpy(dma_fail_url, url, sizeof(dma_fail_url) - 1);
-                        dma_fail_url[sizeof(dma_fail_url) - 1] = '\0';
-                        dma_fail_count = 0;
-                    }
                     dma_fail_count++;
                     size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
                     Serial.printf("[ART] DMA too low (%u < %u, largest=%uKB) — abort #%d\n",
@@ -1091,7 +1086,6 @@ void albumArtTask(void* param) {
                                 Serial.printf("[ART] WiFi reconnected — DMA=%u, resuming\n",
                                               (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA));
                                 dma_fail_count = 0;
-                                dma_fail_url[0] = '\0';
                                 last_art_download_end_ms = millis();
                                 continue;  // retry download without reboot
                             }
@@ -1112,6 +1106,8 @@ void albumArtTask(void* param) {
                     }
                     continue;
                 }
+
+                dma_fail_count = 0;  // DMA healthy — reset consecutive failure counter
 
                 // Acquire network mutex (all network activity serialized)
                 uint32_t t_mutex_start = millis();

@@ -259,8 +259,9 @@ static void lyricsTaskFunc(void* param) {
         // Art auto-restart fires at 20s DMA floor, so this guard is belt-and-suspenders.
         {
             size_t dma_total = heap_caps_get_free_size(MALLOC_CAP_DMA);
-            if (dma_total < 30000) {
-                Serial.printf("[LYRICS] DMA too low (%u) — skipping fetch\n", (unsigned)dma_total);
+            if (dma_total < LYRICS_MIN_FREE_DMA) {
+                Serial.printf("[LYRICS] DMA too low (%u < %u) — skipping fetch\n",
+                              (unsigned)dma_total, (unsigned)LYRICS_MIN_FREE_DMA);
                 xSemaphoreGive(network_mutex);
                 lyrics_fetching = false;
                 lyricsTaskHandle = NULL;

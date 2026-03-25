@@ -411,9 +411,10 @@ void logHeapStatus() {
     size_t free_heap = esp_get_free_heap_size();
     size_t min_heap = esp_get_minimum_free_heap_size();
     size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    size_t free_dma = heap_caps_get_free_size(MALLOC_CAP_DMA);
 
-    Serial.printf("[HEAP] Free: %dKB | Min: %dKB | PSRAM: %dKB\n",
-                  free_heap / 1024, min_heap / 1024, free_psram / 1024);
+    Serial.printf("[HEAP] Free: %dKB | Min: %dKB | PSRAM: %dKB | DMA: %dKB\n",
+                  free_heap / 1024, min_heap / 1024, free_psram / 1024, free_dma / 1024);
 
     // Log task stack high water marks — minimum free bytes ever observed.
     // On ESP-IDF 5.x (ESP32-P4 RISC-V), uxTaskGetStackHighWaterMark returns bytes directly.
@@ -425,9 +426,14 @@ void logHeapStatus() {
     Serial.printf("ClkBg:%d ", clockBgTaskHandle ? uxTaskGetStackHighWaterMark(clockBgTaskHandle) : 0);
     Serial.printf("Lyrics:%d bytes free\n", lyricsTaskHandle ? uxTaskGetStackHighWaterMark(lyricsTaskHandle) : 0);
 
-    // Warn if heap is getting low
+    // Warn if heap or DMA is getting low
     if (free_heap < 50000) {
         Serial.println("[HEAP] WARNING: Low memory!");
+    }
+    if (free_dma < 70000) {
+        Serial.printf("[DMA] WARNING: DMA depleting (%dKB) — art/lyrics may abort. "
+                      "Session depletion ~3.7KB/song. WiFi reconnect fires at 3 consecutive aborts.\n",
+                      (int)(free_dma / 1024));
     }
 }
 

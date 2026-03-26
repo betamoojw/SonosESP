@@ -494,12 +494,18 @@ static void mainAppTask(void* param) {
                     prefs.end();
                     Serial.printf("[MAIN] Reconnecting WiFi to '%s'\n", ssid.c_str());
                     WiFi.begin(ssid.c_str(), pass.c_str());
-                    // Keep UI responsive during reconnect (up to 15s) — pump LVGL in 5ms ticks
+                    // Keep UI responsive during reconnect (up to 30s) — pump LVGL in 5ms ticks.
+                    // Retry WiFi.begin() at 15s: mesh routers (ORBI95 etc.) sometimes miss the
+                    // first scan but respond immediately to a second attempt.
                     unsigned long t = millis();
-                    while (WiFi.status() != WL_CONNECTED && millis() - t < 15000) {
+                    while (WiFi.status() != WL_CONNECTED && millis() - t < 30000) {
                         lv_tick_inc(5); lv_timer_handler();
                         esp_task_wdt_reset();
                         vTaskDelay(pdMS_TO_TICKS(5));
+                        if (WiFi.status() != WL_CONNECTED && millis() - t >= 15000 && millis() - t < 15100) {
+                            Serial.println("[MAIN] WiFi still not connected at 15s — retrying WiFi.begin()");
+                            WiFi.begin(ssid.c_str(), pass.c_str());
+                        }
                     }
                     if (WiFi.status() == WL_CONNECTED) {
                         Serial.printf("[MAIN] WiFi reconnected — DMA=%uKB, resuming art\n",

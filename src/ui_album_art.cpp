@@ -1197,6 +1197,12 @@ void albumArtTask(void* param) {
                     // If a server redirects back to https, we must NOT follow it (would create
                     // unexpected TLS session). Non-200 responses show placeholder instead.
                     http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+                    // Force HTTP/1.0: prevents Transfer-Encoding: chunked responses.
+                    // Plex Direct (plex.direct:32400) returns chunked with no Content-Length.
+                    // getStreamPtr()->readBytes() reads raw bytes — chunk size headers land in
+                    // jpgBuf[0..5] ("1000\r\n") before JPEG magic → format detection fails.
+                    // HTTP/1.0 servers must send flat response; all art sources support it.
+                    http.useHTTP10(true);
 
                     // Re-apply SO_RCVBUF immediately before GET (belt-and-suspenders).
                     // artPreConnectHTTP sets it post-connect, but if lwIP's internal ACK for

@@ -269,17 +269,18 @@
                                             // Crash scenario: dl-start 22KB > 16KB passes → mid-read check at 8KB
                                             // catches the WiFi-alloc drop → aborts before :928.
 #define ART_MIN_FREE_DMA             8000   // Referenced in boot memory map log only (not a download gate).
-#define ART_MIN_DMA_PRE_BURST       55000   // Min DMA before http.GET() (BEFORE burst arrives).
-                                            // CONFIRMED crashes: pre-GET=32KB (log3) and pre-GET=50KB (log2) → :928.
-                                            // Both above old threshold (20KB) — TCP slow-start burst (~20KB) depletes
-                                            // remaining DMA faster than WiFi driver can allocate RX pbufs → pkt_rxbuff
-                                            // overflow. 55KB = 50KB crash floor + 5KB safety margin.
-                                            // At DMA<55KB: abort cleanly. Counter tracks consecutive failures across
+#define ART_MIN_DMA_PRE_BURST       70000   // Min DMA before http.GET() (BEFORE burst arrives).
+                                            // CONFIRMED crashes at 62KB (session=-57KB) and 59KB (session=-103KB):
+                                            // both above old 55KB threshold — TIME_WAIT PCBs deplete DMA-backed SDIO
+                                            // RX path at deep session depletion → pkt_rxbuff overflow → :928.
+                                            // 70KB = highest confirmed crash floor (62KB) + 8KB safety margin.
+                                            // At DMA<70KB: abort cleanly. Counter tracks consecutive failures across
                                             // ANY URL (not per-URL) → 3 aborts → WiFi stop+reconnect → ~120KB DMA.
-                                            // Was 20000: too low (crashes at 32KB and 50KB confirmed in issue #46 logs).
+                                            // Was 55000 (issue #46 logs 18/19 confirmed crashes above 55KB).
 #define LYRICS_MIN_FREE_DMA         55000   // Min DMA before lyrics HTTPS fetch. mbedTLS AES fragmentation failure
                                             // confirmed at 44-48KB total free (contiguous alloc fails even with enough
-                                            // total DMA). Matches ART_MIN_DMA_PRE_BURST — same HTTPS TLS overhead.
+                                            // total DMA). 55KB = 48KB crash floor + 7KB margin. Lower than
+                                            // ART_MIN_DMA_PRE_BURST (70KB) — lyrics HTTPS is smaller/faster than art.
                                             // Was hardcoded 30000 in lyrics.cpp: too low (AES fails at 44-48KB).
 #define ART_DMA_MID_READ_MIN         8000   // Abort if DMA < this DURING the chunk read loop. Belt-and-suspenders:
                                             // if WiFi dynamic RX buffers allocate ~15KB after dl-start passes, this

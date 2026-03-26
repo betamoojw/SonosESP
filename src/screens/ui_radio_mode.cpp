@@ -41,8 +41,16 @@ void setRadioMode(bool enable) {
         if (lbl_next_artist) lv_obj_add_flag(lbl_next_artist, LV_OBJ_FLAG_HIDDEN);
         if (lbl_next_header) lv_obj_add_flag(lbl_next_header, LV_OBJ_FLAG_HIDDEN);
 
+        // Move station name (lbl_title) down to avoid overlap with programme name (lbl_artist).
+        // lbl_artist at y=75 with montserrat_16 can wrap to 2 lines (bottom ~y=115).
+        // Default lbl_title y=100 overlaps. y=125 gives 10px clearance.
+        if (lbl_title) lv_obj_set_y(lbl_title, 125);
+
     } else {
         Serial.println("[RADIO UI] Switching to music mode");
+
+        // Restore station name position (was shifted down for radio 2-line programme name)
+        if (lbl_title) lv_obj_set_y(lbl_title, 100);
 
         // Show all music controls
         if (btn_next) lv_obj_clear_flag(btn_next, LV_OBJ_FLAG_HIDDEN);

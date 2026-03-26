@@ -1049,54 +1049,26 @@ void albumArtTask(void* param) {
                                   (unsigned)dma_snap, (unsigned)ART_MIN_DMA_PRE_BURST,
                                   (unsigned)(largest / 1024), dma_fail_count);
                     if (dma_fail_count >= 3) {
-                        // DMA depleted (WiFi dynamic RX buffers don't release after heavy downloads).
-                        // Try WiFi stop+reconnect first — esp_wifi_stop() releases all dynamic RX
-                        // buffers (~51KB max at 32 buffers × 1.6KB), potentially recovering DMA
-                        // without a full reboot. Fall back to esp_restart() only if still low.
-                        Serial.printf("[ART] DMA low x%d — attempting WiFi reconnect recovery\n",
+                        // DMA depleted after 3 consecutive aborts across any URL.
+                        // CRITICAL: art task and clockBgTask both run with PSRAM stacks.
+                        // esp_restart() and Preferences.begin() both call
+                        // spi_flash_disable_interrupts_caches_and_other_cpu() which asserts
+                        // esp_task_stack_is_sane_cache_disabled() → cache_utils.c:127 crash.
+                        // FIX: delegate WiFi stop + reconnect/restart to mainAppTask (SRAM stack).
+                        Serial.printf("[ART] DMA low x%d — requesting main task recovery\n",
                                       dma_fail_count);
-                        art_download_in_progress = false;  // keep SDIO warm during recovery
+                        art_download_in_progress = false;    // keep SDIO warm during recovery
+                        art_dma_recovery_requested = true;   // mainAppTask picks this up each loop
 
-                        // Stop WiFi: releases dynamic RX buffer pool back to DMA heap
-                        WiFi.disconnect(true);             // true → calls esp_wifi_stop()
-                        vTaskDelay(pdMS_TO_TICKS(2000));   // allow DMA to drain
-
-                        size_t dma_after = heap_caps_get_free_size(MALLOC_CAP_DMA);
-                        Serial.printf("[ART] DMA after WiFi stop: %u (was %u)\n",
-                                      (unsigned)dma_after, (unsigned)dma_snap);
-
-                        if (dma_after > ART_MIN_DMA_PRE_BURST) {
-                            // Recovery worked — reconnect WiFi using saved credentials
-                            Preferences prefs;
-                            prefs.begin(NVS_NAMESPACE, true);
-                            String ssid = prefs.getString(NVS_KEY_SSID, "");
-                            String pass = prefs.getString(NVS_KEY_PASSWORD, "");
-                            prefs.end();
-
-                            Serial.printf("[ART] DMA recovered — reconnecting WiFi to '%s'\n",
-                                          ssid.c_str());
-                            WiFi.begin(ssid.c_str(), pass.c_str());
-
-                            unsigned long t = millis();
-                            while (WiFi.status() != WL_CONNECTED && millis() - t < 15000) {
-                                vTaskDelay(pdMS_TO_TICKS(500));
-                            }
-
-                            if (WiFi.status() == WL_CONNECTED) {
-                                Serial.printf("[ART] WiFi reconnected — DMA=%u, resuming\n",
-                                              (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA));
-                                dma_fail_count = 0;
-                                last_art_download_end_ms = millis();
-                                continue;  // retry download without reboot
-                            }
-                            Serial.println("[ART] WiFi reconnect timed out — restarting");
-                        } else {
-                            Serial.printf("[ART] DMA still low after WiFi stop (%u) — restarting\n",
-                                          (unsigned)dma_after);
+                        // Wait for mainAppTask to complete recovery.
+                        // If restart: esp_restart() fires from SRAM stack — we never return.
+                        // If reconnect: mainAppTask clears the flag when WiFi is back up.
+                        unsigned long t_rec = millis();
+                        while (art_dma_recovery_requested && millis() - t_rec < 25000) {
+                            vTaskDelay(pdMS_TO_TICKS(500));
                         }
-
-                        vTaskDelay(pdMS_TO_TICKS(1000));  // serial flush
-                        esp_restart();
+                        dma_fail_count = 0;
+                        last_art_download_end_ms = millis();
                     } else {
                         // Clear flag so polling keeps SDIO warm during recovery wait.
                         // Flag will be set true again after sdioPreWait on the next iteration.
@@ -1526,6 +1498,13 @@ void albumArtTask(void* param) {
                                                       && jpgBuf[2] == 0x4E
                                                       && jpgBuf[3] == 0x47);
 
+                            if (!isJPEG && !isPNG && read >= 12) {
+                                Serial.printf("[ART] Unknown format — first 12 bytes: "
+                                              "%02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X\n",
+                                              jpgBuf[0],  jpgBuf[1],  jpgBuf[2],  jpgBuf[3],
+                                              jpgBuf[4],  jpgBuf[5],  jpgBuf[6],  jpgBuf[7],
+                                              jpgBuf[8],  jpgBuf[9],  jpgBuf[10], jpgBuf[11]);
+                            }
                             artLogMem("pre-decode");  // DMA before HW JPEG alloc (expect ~90KB)
                             DecodeResult dec = decodeToRGB565(jpgBuf, (size_t)read,
                                                               isJPEG, isPNG);
@@ -1711,4 +1690,8 @@ void requestAlbumArt(const String& url) {
     // art task loop, where flag=false allows polling to keep SDIO warm during the
     // storm-gate wait. Setting it here blocks polling → SDIO idle → DMA clock-gate.
     last_track_change_ms = millis();
+    // Track change from any controller (ESP32 or Sonos app) counts as activity.
+    // Prevents the clock screensaver firing just because the user controlled Sonos
+    // from their phone/computer without touching the ESP32.
+    resetScreenTimeout();
 }

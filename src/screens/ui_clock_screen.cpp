@@ -504,8 +504,17 @@ void clockBgTask(void* /*param*/) {
         int dl_total = 0;
 
         if (clock_picsum_enabled) {
-        dl_buf = (uint8_t*)heap_caps_malloc(
-            CLOCK_BG_MAX_DL_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            // DMA guard: skip photo if DMA is depleted. SDIO TX copy buffer (transport_drv.c:290)
+            // fails during HTTP SYN when session DMA loss ≥ -66KB — confirmed log16 crash3.
+            // Photo is non-critical; weather fetch runs regardless.
+            if (heap_caps_get_free_size(MALLOC_CAP_DMA) < CLOCK_BG_MIN_DMA) {
+                Serial.printf("[CLKBG] DMA too low (%uKB < %uKB) — skipping photo this cycle\n",
+                              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_DMA) / 1024),
+                              (unsigned)(CLOCK_BG_MIN_DMA / 1024));
+            } else {
+                dl_buf = (uint8_t*)heap_caps_malloc(
+                    CLOCK_BG_MAX_DL_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            }
         }
 
         if (dl_buf) {

@@ -107,6 +107,7 @@ extern volatile unsigned long last_network_end_ms;
 extern volatile unsigned long last_https_end_ms;
 extern volatile unsigned long last_queue_fetch_time;
 extern volatile bool          art_download_in_progress;
+extern volatile bool          art_dma_recovery_requested;  // Set by art task; mainAppTask handles WiFi stop+reconnect/restart
 extern volatile unsigned long last_art_download_end_ms;
 extern volatile unsigned long last_track_change_ms;
 extern volatile unsigned long last_transient_500_ms;

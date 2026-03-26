@@ -291,6 +291,10 @@
 // Lyrics-specific
 #define LYRICS_ART_WAIT_TIMEOUT_MS  15000   // Max wait for art_download_in_progress to clear (storm cooldown 3000ms + download ~2000ms + margin)
 #define LYRICS_RETRY_DELAY_MS        2000   // Between lyrics HTTPS fetch retry attempts
+#define CLOCK_BG_MIN_DMA            70000   // Skip clockBgTask photo download if DMA below this.
+                                            // Confirmed crash: log16 crash3 transport_drv.c:290 (copy_buff) — SDIO TX
+                                            // copy buffer fails when session DMA loss ≥ -66KB (raw DMA ~57KB idle).
+                                            // 70KB is conservative; photo is non-critical, weather still fetches.
 
 // =============================================================================
 // WATCHDOG & RELIABILITY

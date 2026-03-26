@@ -462,6 +462,65 @@ static void mainAppTask(void* param) {
             checkClockTrigger();
             checkWiFiReconnect();
             logHeapStatus();  // Periodic memory monitoring
+
+            // ── DMA recovery handler ─────────────────────────────────────────────
+            // Art task (PSRAM stack) cannot call esp_restart() or Preferences.begin()
+            // directly — both call spi_flash_disable_interrupts_caches_and_other_cpu()
+            // which asserts esp_task_stack_is_sane_cache_disabled() → cache_utils.c:127.
+            // mainAppTask has an internal SRAM stack so both are safe here.
+            if (art_dma_recovery_requested) {
+                Serial.println("[MAIN] DMA recovery: stopping WiFi to release dynamic RX pool");
+                WiFi.disconnect(true);   // esp_wifi_stop() releases ~51KB WiFi dynamic RX buffers
+                esp_task_wdt_reset();
+                // Keep UI responsive during WiFi stop drain (2s) — pump LVGL in 5ms ticks
+                { unsigned long t_drain = millis();
+                  while (millis() - t_drain < 2000) {
+                      lv_tick_inc(5); lv_timer_handler();
+                      esp_task_wdt_reset();
+                      vTaskDelay(pdMS_TO_TICKS(5));
+                  }
+                }
+
+                size_t dma_after = heap_caps_get_free_size(MALLOC_CAP_DMA);
+                Serial.printf("[MAIN] DMA after WiFi stop: %u (need >%u)\n",
+                              (unsigned)dma_after, (unsigned)ART_MIN_DMA_PRE_BURST);
+
+                if (dma_after > ART_MIN_DMA_PRE_BURST) {
+                    // DMA recovered — reconnect using saved credentials (NVS safe from SRAM stack)
+                    Preferences prefs;
+                    prefs.begin(NVS_NAMESPACE, true);
+                    String ssid = prefs.getString(NVS_KEY_SSID, "");
+                    String pass = prefs.getString(NVS_KEY_PASSWORD, "");
+                    prefs.end();
+                    Serial.printf("[MAIN] Reconnecting WiFi to '%s'\n", ssid.c_str());
+                    WiFi.begin(ssid.c_str(), pass.c_str());
+                    // Keep UI responsive during reconnect (up to 15s) — pump LVGL in 5ms ticks
+                    unsigned long t = millis();
+                    while (WiFi.status() != WL_CONNECTED && millis() - t < 15000) {
+                        lv_tick_inc(5); lv_timer_handler();
+                        esp_task_wdt_reset();
+                        vTaskDelay(pdMS_TO_TICKS(5));
+                    }
+                    if (WiFi.status() == WL_CONNECTED) {
+                        Serial.printf("[MAIN] WiFi reconnected — DMA=%uKB, resuming art\n",
+                                      (unsigned)(heap_caps_get_free_size(MALLOC_CAP_DMA) / 1024));
+                        art_dma_recovery_requested = false;  // signal art task: retry download
+                    } else {
+                        Serial.println("[MAIN] WiFi reconnect timed out — restarting");
+                        esp_task_wdt_reset();
+                        vTaskDelay(pdMS_TO_TICKS(1000));
+                        esp_restart();
+                    }
+                } else {
+                    // WiFi.stop() didn't help — DMA permanently fragmented, restart required
+                    Serial.printf("[MAIN] DMA still low after WiFi stop (%u) — restarting\n",
+                                  (unsigned)dma_after);
+                    esp_task_wdt_reset();
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    esp_restart();
+                }
+            }
+            // ────────────────────────────────────────────────────────────────────
         }
 
         vTaskDelay(pdMS_TO_TICKS(3));

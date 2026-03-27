@@ -711,12 +711,84 @@ static void displayArt(const DecodeResult& dec, const char* url) {
         new_color = ((uint32_t)avg_r << 16) | ((uint32_t)avg_g << 8) | avg_b;
     }
 
+    // Generate smooth blurred fullscreen background:
+    // 1. Downsample 420×420 → 32×32 via box average (each output pixel = avg of 13×13 input pixels)
+    // 2. Apply a 3×3 box blur pass on the 32×32 result — smooths hard colour-zone edges
+    // 3. Bilinear upscale 32×32 → 800×480
+    // Entire process runs once per track change in art task — zero LVGL/rendering overhead.
+    // (LVGL 9.5 blur_radius would re-allocate a ~768KB layer buffer on every dirty redraw.)
+    if (blur_bg_buf) {
+        static uint16_t blur_tiny[64 * 64];
+        static uint16_t blur_smooth[64 * 64];
+        const int TINY = 64;
+
+        // Step 1: box-average downsample — map each tiny pixel to its art region
+        for (int ty = 0; ty < TINY; ty++) {
+            int y0 = ty * ART_SIZE / TINY, y1 = (ty + 1) * ART_SIZE / TINY;
+            for (int tx = 0; tx < TINY; tx++) {
+                int x0 = tx * ART_SIZE / TINY, x1 = (tx + 1) * ART_SIZE / TINY;
+                uint32_t r = 0, g = 0, b = 0, n = 0;
+                for (int py = y0; py < y1; py++) {
+                    uint16_t* row = &art_temp_buffer[py * ART_SIZE + x0];
+                    for (int px = 0; px < (x1 - x0); px++) {
+                        uint16_t p = row[px];
+                        r += (p >> 11) & 0x1F;
+                        g += (p >> 5)  & 0x3F;
+                        b +=  p        & 0x1F;
+                        n++;
+                    }
+                }
+                blur_tiny[ty * TINY + tx] = n ? (uint16_t)(((r/n) << 11) | ((g/n) << 5) | (b/n)) : 0;
+            }
+        }
+
+        // Step 2: 5 passes of 3×3 box blur — strong Gaussian approximation on the 64×64 buffer.
+        // Each pass ~64×64×9 = 37K ops. Five passes total ~185K ops → <1ms at 400MHz.
+        uint16_t* src_buf = blur_tiny;
+        uint16_t* dst_buf = blur_smooth;
+        for (int pass = 0; pass < 5; pass++) {
+            for (int ty = 0; ty < TINY; ty++) {
+                for (int tx = 0; tx < TINY; tx++) {
+                    uint32_t r = 0, g = 0, b = 0, n = 0;
+                    for (int dy = -1; dy <= 1; dy++) {
+                        int ny = ty + dy;
+                        if (ny < 0 || ny >= TINY) continue;
+                        for (int dx = -1; dx <= 1; dx++) {
+                            int nx = tx + dx;
+                            if (nx < 0 || nx >= TINY) continue;
+                            uint16_t p = src_buf[ny * TINY + nx];
+                            r += (p >> 11) & 0x1F;
+                            g += (p >> 5)  & 0x3F;
+                            b +=  p        & 0x1F;
+                            n++;
+                        }
+                    }
+                    dst_buf[ty * TINY + tx] = (uint16_t)(((r/n) << 11) | ((g/n) << 5) | (b/n));
+                }
+            }
+            // Swap buffers for next pass
+            uint16_t* tmp = src_buf; src_buf = dst_buf; dst_buf = tmp;
+        }
+        // src_buf holds the final blurred result. Darken to ~35% for text readability.
+        for (int i = 0; i < TINY * TINY; i++) {
+            uint16_t p = src_buf[i];
+            uint32_t ri = ((p >> 11) & 0x1F) * 35 / 100;
+            uint32_t gi = ((p >> 5)  & 0x3F) * 35 / 100;
+            uint32_t bi = ( p        & 0x1F) * 35 / 100;
+            src_buf[i] = (uint16_t)((ri << 11) | (gi << 5) | bi);
+        }
+
+        // Step 3: bilinear upscale to full screen
+        scaleImageBilinear(src_buf, TINY, TINY, TINY, blur_bg_buf, 800, 480);
+    }
+
     if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(100))) {
         memcpy(art_buffer, art_temp_buffer, ART_SIZE * ART_SIZE * 2);
         last_art_url   = url;
         dominant_color = new_color;
         art_ready      = true;
         color_ready    = true;
+        blur_bg_ready  = true;
         xSemaphoreGive(art_mutex);
     }
 
@@ -858,6 +930,8 @@ void albumArtTask(void* param) {
         art_buffer     = (uint16_t*)heap_caps_malloc(ART_SIZE * ART_SIZE * 2, MALLOC_CAP_SPIRAM);
     if (!art_temp_buffer)
         art_temp_buffer = (uint16_t*)heap_caps_malloc(ART_SIZE * ART_SIZE * 2, MALLOC_CAP_SPIRAM);
+    if (!blur_bg_buf)
+        blur_bg_buf = (uint16_t*)heap_caps_malloc(800 * 480 * 2, MALLOC_CAP_SPIRAM);
     if (!art_buffer || !art_temp_buffer) { vTaskDelete(NULL); return; }
 
     if (!art_cache[0].pixels)

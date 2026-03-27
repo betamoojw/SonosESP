@@ -124,6 +124,12 @@ int art_offset_y = 0;
 bool is_sonos_radio_art = false;
 bool pending_is_station_logo = false;
 
+// Blur background
+lv_img_dsc_t blur_bg_dsc;
+uint16_t*    blur_bg_buf   = nullptr;
+volatile bool blur_bg_ready = false;
+lv_obj_t*    img_blur_bg   = nullptr;
+
 // ============================================================================
 // Network Tasks — FreeRTOS Handles and Shutdown Signals
 // ============================================================================

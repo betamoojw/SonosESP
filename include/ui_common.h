@@ -98,6 +98,12 @@ extern SemaphoreHandle_t art_mutex;
 extern uint32_t dominant_color;
 extern volatile bool color_ready;
 extern int art_offset_x, art_offset_y;
+
+// Blur background — blurred art scaled to full screen (replaces ambient color animation)
+extern lv_img_dsc_t blur_bg_dsc;
+extern uint16_t*    blur_bg_buf;
+extern volatile bool blur_bg_ready;
+extern lv_obj_t*    img_blur_bg;
 extern bool is_sonos_radio_art;
 extern bool pending_is_station_logo;
 

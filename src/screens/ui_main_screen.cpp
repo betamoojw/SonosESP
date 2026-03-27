@@ -9,8 +9,15 @@
 // ==================== MAIN SCREEN - CLEAN SIMPLE DESIGN ====================
 void createMainScreen() {
     scr_main = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(scr_main, COL_BG, 0);
+    lv_obj_set_style_bg_color(scr_main, lv_color_hex(0x111111), 0);  // dark fallback before first art loads
     lv_obj_clear_flag(scr_main, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Blurred art background — fullscreen, must be first child (lowest z-order)
+    img_blur_bg = lv_img_create(scr_main);
+    lv_obj_set_size(img_blur_bg, 800, 480);
+    lv_obj_set_pos(img_blur_bg, 0, 0);
+    lv_obj_clear_flag(img_blur_bg, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(img_blur_bg, LV_OBJ_FLAG_HIDDEN);  // hidden until first art loads
 
     // LEFT: Album Art Area — 450px wide so img has equal 30px margin left/top/bottom
     // (ART_SIZE=420, panel height=480 → top/bottom=(480-420)/2=30px, left=30px inset)
@@ -18,6 +25,7 @@ void createMainScreen() {
     lv_obj_set_size(panel_art, 450, 480);
     lv_obj_set_pos(panel_art, 0, 0);
     lv_obj_set_style_bg_color(panel_art, lv_color_hex(0x1a1a1a), 0);
+    lv_obj_set_style_bg_opa(panel_art, LV_OPA_TRANSP, 0);  // fully transparent: blur bg is the background
     lv_obj_set_style_radius(panel_art, 0, 0);
     lv_obj_set_style_border_width(panel_art, 0, 0);
     lv_obj_set_style_pad_all(panel_art, 0, 0);
@@ -29,6 +37,11 @@ void createMainScreen() {
     lv_obj_align(img_album, LV_ALIGN_LEFT_MID, 30, 0);
     lv_obj_set_style_radius(img_album, 24, 0);
     lv_obj_set_style_clip_corner(img_album, true, 0);
+    lv_obj_set_style_shadow_width(img_album, 20, 0);    // 20px: good visual, 4x less cost than 40px
+    lv_obj_set_style_shadow_color(img_album, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_shadow_opa(img_album, LV_OPA_60, 0);
+    lv_obj_set_style_shadow_offset_x(img_album, 0, 0);
+    lv_obj_set_style_shadow_offset_y(img_album, 8, 0);
 
     // Placeholder when no art — centered on the art image area
     art_placeholder = lv_label_create(panel_art);
@@ -53,6 +66,7 @@ void createMainScreen() {
     lv_obj_set_size(panel_right, 350, 480);
     lv_obj_set_pos(panel_right, 450, 0);
     lv_obj_set_style_bg_color(panel_right, COL_BG, 0);
+    lv_obj_set_style_bg_opa(panel_right, LV_OPA_TRANSP, 0);  // fully transparent: blur bg is the background
     lv_obj_set_style_radius(panel_right, 0, 0);
     lv_obj_set_style_border_width(panel_right, 0, 0);
     lv_obj_set_style_pad_all(panel_right, 0, 0);

@@ -64,6 +64,53 @@ static bool artParseHttpHost(const char* url, char* host_buf, size_t host_buf_le
     return true;
 }
 
+// Strip HTTP chunked transfer encoding in-place.
+// Sonos getaa at :1400 ignores HTTP/1.0 requests and returns chunked for x-sonos-http
+// sources (BBC Sounds, Audible, Amazon Music). Without dechunking, the buffer starts with
+// "1000\r\n" (hex chunk-size header) before the JPEG/PNG magic bytes, causing format
+// detection to fail and art to show as placeholder.
+// Returns the new data length; leaves buf unchanged and returns len if not chunked.
+static size_t dechunkBuffer(uint8_t* buf, size_t len) {
+    if (len < 5) return len;
+    // Quick check: chunked data starts with ASCII hex digit(s) followed by \r\n
+    uint8_t c0 = buf[0];
+    bool firstIsHex = (c0 >= '0' && c0 <= '9') || (c0 >= 'a' && c0 <= 'f') || (c0 >= 'A' && c0 <= 'F');
+    if (!firstIsHex) return len;
+    // Confirm by finding \r\n within the first 10 bytes
+    bool hasCRLF = false;
+    for (int i = 1; i < 10 && i < (int)len - 1; i++) {
+        if (buf[i] == '\r' && buf[i+1] == '\n') { hasCRLF = true; break; }
+    }
+    if (!hasCRLF) return len;
+
+    uint8_t* src = buf;
+    uint8_t* dst = buf;
+    const uint8_t* end = buf + len;
+    size_t newLen = 0;
+
+    while (src < end) {
+        // Parse hex chunk size
+        char sizeBuf[16]; int sLen = 0;
+        while (src < end && sLen < 15) {
+            uint8_t ch = *src;
+            if ((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F'))
+                { sizeBuf[sLen++] = ch; src++; }
+            else break;
+        }
+        sizeBuf[sLen] = '\0';
+        if (sLen == 0) break;
+        if (src + 2 <= end && src[0] == '\r' && src[1] == '\n') src += 2;
+        size_t chunkSz = (size_t)strtoul(sizeBuf, nullptr, 16);
+        if (chunkSz == 0) break;  // terminal chunk
+        size_t avail = (size_t)(end - src);
+        if (chunkSz > avail) chunkSz = avail;
+        if (dst != src) memmove(dst, src, chunkSz);
+        dst += chunkSz; src += chunkSz; newLen += chunkSz;
+        if (src + 2 <= end && src[0] == '\r' && src[1] == '\n') src += 2;
+    }
+    return (newLen > 0) ? newLen : len;
+}
+
 // Pre-connect HTTP socket with SO_RCVBUF set BEFORE TCP SYN.
 // Returns connected WiFiClient on success, unconnected on failure (caller falls back to http.begin(url)).
 static WiFiClient artPreConnectHTTP(const char* url, int timeout_ms) {
@@ -711,12 +758,84 @@ static void displayArt(const DecodeResult& dec, const char* url) {
         new_color = ((uint32_t)avg_r << 16) | ((uint32_t)avg_g << 8) | avg_b;
     }
 
+    // Generate smooth blurred fullscreen background:
+    // 1. Downsample 420×420 → 32×32 via box average (each output pixel = avg of 13×13 input pixels)
+    // 2. Apply a 3×3 box blur pass on the 32×32 result — smooths hard colour-zone edges
+    // 3. Bilinear upscale 32×32 → 800×480
+    // Entire process runs once per track change in art task — zero LVGL/rendering overhead.
+    // (LVGL 9.5 blur_radius would re-allocate a ~768KB layer buffer on every dirty redraw.)
+    if (blur_bg_buf) {
+        static uint16_t blur_tiny[64 * 64];
+        static uint16_t blur_smooth[64 * 64];
+        const int TINY = 64;
+
+        // Step 1: box-average downsample — map each tiny pixel to its art region
+        for (int ty = 0; ty < TINY; ty++) {
+            int y0 = ty * ART_SIZE / TINY, y1 = (ty + 1) * ART_SIZE / TINY;
+            for (int tx = 0; tx < TINY; tx++) {
+                int x0 = tx * ART_SIZE / TINY, x1 = (tx + 1) * ART_SIZE / TINY;
+                uint32_t r = 0, g = 0, b = 0, n = 0;
+                for (int py = y0; py < y1; py++) {
+                    uint16_t* row = &art_temp_buffer[py * ART_SIZE + x0];
+                    for (int px = 0; px < (x1 - x0); px++) {
+                        uint16_t p = row[px];
+                        r += (p >> 11) & 0x1F;
+                        g += (p >> 5)  & 0x3F;
+                        b +=  p        & 0x1F;
+                        n++;
+                    }
+                }
+                blur_tiny[ty * TINY + tx] = n ? (uint16_t)(((r/n) << 11) | ((g/n) << 5) | (b/n)) : 0;
+            }
+        }
+
+        // Step 2: 5 passes of 3×3 box blur — strong Gaussian approximation on the 64×64 buffer.
+        // Each pass ~64×64×9 = 37K ops. Five passes total ~185K ops → <1ms at 400MHz.
+        uint16_t* src_buf = blur_tiny;
+        uint16_t* dst_buf = blur_smooth;
+        for (int pass = 0; pass < 5; pass++) {
+            for (int ty = 0; ty < TINY; ty++) {
+                for (int tx = 0; tx < TINY; tx++) {
+                    uint32_t r = 0, g = 0, b = 0, n = 0;
+                    for (int dy = -1; dy <= 1; dy++) {
+                        int ny = ty + dy;
+                        if (ny < 0 || ny >= TINY) continue;
+                        for (int dx = -1; dx <= 1; dx++) {
+                            int nx = tx + dx;
+                            if (nx < 0 || nx >= TINY) continue;
+                            uint16_t p = src_buf[ny * TINY + nx];
+                            r += (p >> 11) & 0x1F;
+                            g += (p >> 5)  & 0x3F;
+                            b +=  p        & 0x1F;
+                            n++;
+                        }
+                    }
+                    dst_buf[ty * TINY + tx] = (uint16_t)(((r/n) << 11) | ((g/n) << 5) | (b/n));
+                }
+            }
+            // Swap buffers for next pass
+            uint16_t* tmp = src_buf; src_buf = dst_buf; dst_buf = tmp;
+        }
+        // src_buf holds the final blurred result. Darken to ~35% for text readability.
+        for (int i = 0; i < TINY * TINY; i++) {
+            uint16_t p = src_buf[i];
+            uint32_t ri = ((p >> 11) & 0x1F) * 35 / 100;
+            uint32_t gi = ((p >> 5)  & 0x3F) * 35 / 100;
+            uint32_t bi = ( p        & 0x1F) * 35 / 100;
+            src_buf[i] = (uint16_t)((ri << 11) | (gi << 5) | bi);
+        }
+
+        // Step 3: bilinear upscale to full screen
+        scaleImageBilinear(src_buf, TINY, TINY, TINY, blur_bg_buf, 800, 480);
+    }
+
     if (xSemaphoreTake(art_mutex, pdMS_TO_TICKS(100))) {
         memcpy(art_buffer, art_temp_buffer, ART_SIZE * ART_SIZE * 2);
         last_art_url   = url;
         dominant_color = new_color;
         art_ready      = true;
         color_ready    = true;
+        blur_bg_ready  = true;
         xSemaphoreGive(art_mutex);
     }
 
@@ -858,6 +977,8 @@ void albumArtTask(void* param) {
         art_buffer     = (uint16_t*)heap_caps_malloc(ART_SIZE * ART_SIZE * 2, MALLOC_CAP_SPIRAM);
     if (!art_temp_buffer)
         art_temp_buffer = (uint16_t*)heap_caps_malloc(ART_SIZE * ART_SIZE * 2, MALLOC_CAP_SPIRAM);
+    if (!blur_bg_buf)
+        blur_bg_buf = (uint16_t*)heap_caps_malloc(800 * 480 * 2, MALLOC_CAP_SPIRAM);
     if (!art_buffer || !art_temp_buffer) { vTaskDelete(NULL); return; }
 
     if (!art_cache[0].pixels)
@@ -1039,70 +1160,42 @@ void albumArtTask(void* param) {
                 Serial.printf("[ART/flag-set] MEM: heap=%u dma=%u psram=%u stk=%u\n",
                     heap_caps_get_free_size(MALLOC_CAP_DEFAULT), (unsigned)dma_snap,
                     heap_caps_get_free_size(MALLOC_CAP_SPIRAM), uxTaskGetStackHighWaterMark(NULL));
+                // Count consecutive DMA-too-low aborts across ANY URL.
+                // Per-URL tracking was wrong: new song = new URL = counter reset = WiFi recovery never fires.
+                static int dma_fail_count = 0;
                 if (dma_snap < ART_MIN_DMA_PRE_BURST) {
-                    // Count consecutive failures for this URL.
-                    static char dma_fail_url[512] = "";
-                    static int  dma_fail_count    = 0;
-                    if (strncmp(dma_fail_url, url, sizeof(dma_fail_url) - 1) != 0) {
-                        strncpy(dma_fail_url, url, sizeof(dma_fail_url) - 1);
-                        dma_fail_url[sizeof(dma_fail_url) - 1] = '\0';
-                        dma_fail_count = 0;
-                    }
                     dma_fail_count++;
                     size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
                     Serial.printf("[ART] DMA too low (%u < %u, largest=%uKB) — abort #%d\n",
                                   (unsigned)dma_snap, (unsigned)ART_MIN_DMA_PRE_BURST,
                                   (unsigned)(largest / 1024), dma_fail_count);
                     if (dma_fail_count >= 3) {
-                        // DMA depleted (WiFi dynamic RX buffers don't release after heavy downloads).
-                        // Try WiFi stop+reconnect first — esp_wifi_stop() releases all dynamic RX
-                        // buffers (~51KB max at 32 buffers × 1.6KB), potentially recovering DMA
-                        // without a full reboot. Fall back to esp_restart() only if still low.
-                        Serial.printf("[ART] DMA low x%d — attempting WiFi reconnect recovery\n",
+                        // DMA depleted after 3 consecutive aborts across any URL.
+                        // CRITICAL: art task and clockBgTask both run with PSRAM stacks.
+                        // esp_restart() and Preferences.begin() both call
+                        // spi_flash_disable_interrupts_caches_and_other_cpu() which asserts
+                        // esp_task_stack_is_sane_cache_disabled() → cache_utils.c:127 crash.
+                        // FIX: delegate WiFi stop + reconnect/restart to mainAppTask (SRAM stack).
+                        Serial.printf("[ART] DMA low x%d — requesting main task recovery\n",
                                       dma_fail_count);
-                        art_download_in_progress = false;  // keep SDIO warm during recovery
+                        art_download_in_progress = false;    // keep SDIO warm during recovery
+                        art_dma_recovery_requested = true;   // mainAppTask picks this up each loop
 
-                        // Stop WiFi: releases dynamic RX buffer pool back to DMA heap
-                        WiFi.disconnect(true);             // true → calls esp_wifi_stop()
-                        vTaskDelay(pdMS_TO_TICKS(2000));   // allow DMA to drain
-
-                        size_t dma_after = heap_caps_get_free_size(MALLOC_CAP_DMA);
-                        Serial.printf("[ART] DMA after WiFi stop: %u (was %u)\n",
-                                      (unsigned)dma_after, (unsigned)dma_snap);
-
-                        if (dma_after > ART_MIN_DMA_PRE_BURST) {
-                            // Recovery worked — reconnect WiFi using saved credentials
-                            Preferences prefs;
-                            prefs.begin(NVS_NAMESPACE, true);
-                            String ssid = prefs.getString(NVS_KEY_SSID, "");
-                            String pass = prefs.getString(NVS_KEY_PASSWORD, "");
-                            prefs.end();
-
-                            Serial.printf("[ART] DMA recovered — reconnecting WiFi to '%s'\n",
-                                          ssid.c_str());
-                            WiFi.begin(ssid.c_str(), pass.c_str());
-
-                            unsigned long t = millis();
-                            while (WiFi.status() != WL_CONNECTED && millis() - t < 15000) {
-                                vTaskDelay(pdMS_TO_TICKS(500));
-                            }
-
-                            if (WiFi.status() == WL_CONNECTED) {
-                                Serial.printf("[ART] WiFi reconnected — DMA=%u, resuming\n",
-                                              (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA));
-                                dma_fail_count = 0;
-                                dma_fail_url[0] = '\0';
-                                last_art_download_end_ms = millis();
-                                continue;  // retry download without reboot
-                            }
-                            Serial.println("[ART] WiFi reconnect timed out — restarting");
-                        } else {
-                            Serial.printf("[ART] DMA still low after WiFi stop (%u) — restarting\n",
-                                          (unsigned)dma_after);
+                        // Wait for mainAppTask to complete recovery.
+                        // If restart: esp_restart() fires from SRAM stack — we never return.
+                        // If reconnect: mainAppTask clears the flag when WiFi is back up.
+                        // 55s timeout: worst-case mainAppTask takes 2s WiFi-stop drain
+                        // + 30s reconnect + 15s DMA stabilisation + 5s buffer = 52s.
+                        // Original 25s caused art task to time out mid-reconnect, reset
+                        // dma_fail_count to 0, re-enter the abort loop, hit 3 aborts again
+                        // at ~second 31, and request a SECOND recovery while mainAppTask
+                        // was still inside WiFi.begin() — cascading reconnect loop.
+                        unsigned long t_rec = millis();
+                        while (art_dma_recovery_requested && millis() - t_rec < 55000) {
+                            vTaskDelay(pdMS_TO_TICKS(500));
                         }
-
-                        vTaskDelay(pdMS_TO_TICKS(1000));  // serial flush
-                        esp_restart();
+                        dma_fail_count = 0;
+                        last_art_download_end_ms = millis();
                     } else {
                         // Clear flag so polling keeps SDIO warm during recovery wait.
                         // Flag will be set true again after sdioPreWait on the next iteration.
@@ -1112,6 +1205,8 @@ void albumArtTask(void* param) {
                     }
                     continue;
                 }
+
+                dma_fail_count = 0;  // DMA healthy — reset consecutive failure counter
 
                 // Acquire network mutex (all network activity serialized)
                 uint32_t t_mutex_start = millis();
@@ -1229,6 +1324,12 @@ void albumArtTask(void* param) {
                     // If a server redirects back to https, we must NOT follow it (would create
                     // unexpected TLS session). Non-200 responses show placeholder instead.
                     http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+                    // Force HTTP/1.0: prevents Transfer-Encoding: chunked responses.
+                    // Plex Direct (plex.direct:32400) returns chunked with no Content-Length.
+                    // getStreamPtr()->readBytes() reads raw bytes — chunk size headers land in
+                    // jpgBuf[0..5] ("1000\r\n") before JPEG magic → format detection fails.
+                    // HTTP/1.0 servers must send flat response; all art sources support it.
+                    http.useHTTP10(true);
 
                     // Re-apply SO_RCVBUF immediately before GET (belt-and-suspenders).
                     // artPreConnectHTTP sets it post-connect, but if lwIP's internal ACK for
@@ -1521,6 +1622,11 @@ void albumArtTask(void* param) {
                             // cost on P4 side per art download.
                             artLogMem("post-close");
 
+                            // ── Dechunk if needed ─────────────────────────────
+                            // Sonos getaa at :1400 returns chunked encoding for
+                            // x-sonos-http sources even when HTTP/1.0 was requested.
+                            read = (int)dechunkBuffer(jpgBuf, (size_t)read);
+
                             // ── Format detection ──────────────────────────────
                             bool isJPEG = (read >= 3 && jpgBuf[0] == 0xFF
                                                       && jpgBuf[1] == 0xD8
@@ -1530,6 +1636,13 @@ void albumArtTask(void* param) {
                                                       && jpgBuf[2] == 0x4E
                                                       && jpgBuf[3] == 0x47);
 
+                            if (!isJPEG && !isPNG && read >= 12) {
+                                Serial.printf("[ART] Unknown format — first 12 bytes: "
+                                              "%02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X\n",
+                                              jpgBuf[0],  jpgBuf[1],  jpgBuf[2],  jpgBuf[3],
+                                              jpgBuf[4],  jpgBuf[5],  jpgBuf[6],  jpgBuf[7],
+                                              jpgBuf[8],  jpgBuf[9],  jpgBuf[10], jpgBuf[11]);
+                            }
                             artLogMem("pre-decode");  // DMA before HW JPEG alloc (expect ~90KB)
                             DecodeResult dec = decodeToRGB565(jpgBuf, (size_t)read,
                                                               isJPEG, isPNG);
@@ -1715,4 +1828,8 @@ void requestAlbumArt(const String& url) {
     // art task loop, where flag=false allows polling to keep SDIO warm during the
     // storm-gate wait. Setting it here blocks polling → SDIO idle → DMA clock-gate.
     last_track_change_ms = millis();
+    // Track change from any controller (ESP32 or Sonos app) counts as activity.
+    // Prevents the clock screensaver firing just because the user controlled Sonos
+    // from their phone/computer without touching the ESP32.
+    resetScreenTimeout();
 }

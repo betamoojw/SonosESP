@@ -90,6 +90,13 @@ static lv_obj_t* clock_wx_fc_day[6]  = {};       // "3pm" / "15h" etc -- montser
 static lv_obj_t* clock_wx_fc_icon[6] = {};       // Condition icon -- lv_font_weathericons_32
 static lv_obj_t* clock_wx_fc_temp[6] = {};       // "−5°" / "3°" — montserrat_16
 
+// ── Top-right panel: UV index + feels-like + sunrise/sunset ──────────────────
+static lv_obj_t* clock_wx_tr_panel   = nullptr;  // panel at (415,10)
+static lv_obj_t* clock_wx_fl_lbl     = nullptr;  // "Feels like  -3°C"
+static lv_obj_t* clock_wx_uv_lbl     = nullptr;  // "UV  7  High"
+static lv_obj_t* clock_wx_rise_t_lbl = nullptr;  // "Rise  06:42"
+static lv_obj_t* clock_wx_set_t_lbl  = nullptr;  // "Set   19:45"
+
 // ============================================================================
 // WMO weather code → human-readable condition string
 // ============================================================================
@@ -128,11 +135,24 @@ static const char* wmoCondition(int code) {
 #define WI_NIGHT_CLEAR       "\xEF\x80\xAE"   // U+F02E  wi-night-clear
 #define WI_NIGHT_CLOUDY_HIGH "\xEF\x81\xBE"   // U+F07E  wi-night-alt-cloudy-high
 #define WI_NIGHT_PARTLY      "\xEF\x82\x81"   // U+F081  wi-night-alt-partly-cloudy
+#define WI_SUNRISE           "\xEF\x81\x91"   // U+F051  wi-sunrise
+#define WI_SUNSET            "\xEF\x81\x92"   // U+F052  wi-sunset
 
-static const char* wmoGlyph(int code) {
-    if (code == 0)  return WI_DAY_SUNNY;
-    if (code == 1)  return WI_DAY_CLOUDY_HIGH;
-    if (code == 2)  return WI_DAY_CLOUDY;
+// Returns true if the given hour (0–23) falls outside sunrise..sunset.
+// Parses clock_wx_sunrise / clock_wx_sunset ("HH:MM") — defaults to 6h/20h if not set.
+static bool isNightHour(int hour) {
+    int rise_h = 6, set_h = 20;
+    if (clock_wx_sunrise[0] >= '0' && clock_wx_sunrise[0] <= '2')
+        rise_h = (clock_wx_sunrise[0] - '0') * 10 + (clock_wx_sunrise[1] - '0');
+    if (clock_wx_sunset[0] >= '0' && clock_wx_sunset[0] <= '2')
+        set_h  = (clock_wx_sunset[0]  - '0') * 10 + (clock_wx_sunset[1]  - '0');
+    return (hour < rise_h || hour >= set_h);
+}
+
+static const char* wmoGlyph(int code, bool night = false) {
+    if (code == 0)  return night ? WI_NIGHT_CLEAR       : WI_DAY_SUNNY;
+    if (code == 1)  return night ? WI_NIGHT_CLOUDY_HIGH : WI_DAY_CLOUDY_HIGH;
+    if (code == 2)  return night ? WI_NIGHT_PARTLY      : WI_DAY_CLOUDY;
     if (code == 3)  return WI_CLOUDY;
     if (code <= 48) return WI_FOG;
     if (code <= 55) return WI_SPRINKLE;
@@ -146,6 +166,24 @@ static const char* wmoGlyph(int code) {
     if (code == 86)               return WI_SNOW_WIND;
     if (code >= 95)               return WI_THUNDERSTORM;
     return WI_CLOUDY;
+}
+
+// ============================================================================
+// UV index helpers — WHO colour scale + risk label
+// ============================================================================
+static lv_color_t uvColor(int uv) {
+    if (uv <= 2)  return lv_color_hex(0x56CB00);   // Low       — green
+    if (uv <= 5)  return lv_color_hex(0xF9C000);   // Moderate  — yellow
+    if (uv <= 7)  return lv_color_hex(0xF77800);   // High      — orange
+    if (uv <= 10) return lv_color_hex(0xEF3636);   // Very High — red
+    return             lv_color_hex(0x9E3FF3);     // Extreme   — violet
+}
+static const char* uvLabel(int uv) {
+    if (uv <= 2)  return "Low";
+    if (uv <= 5)  return "Moderate";
+    if (uv <= 7)  return "High";
+    if (uv <= 10) return "Very High";
+    return             "Extreme";
 }
 
 // ============================================================================
@@ -175,18 +213,41 @@ static void applyWeatherToWidgets() {
         lv_label_set_text(clock_wx_cond_lbl, wmoCondition(clock_wx_wmo));
         snprintf(buf, sizeof(buf), "H: %d%%   W: %d km/h", clock_wx_humidity, clock_wx_wind);
         lv_label_set_text(clock_wx_detail_lbl, buf);
-        if (clock_wx_icon) lv_label_set_text(clock_wx_icon, wmoGlyph(clock_wx_wmo));
+        {
+            struct tm _t = {};
+            bool _night = getLocalTime(&_t, 0) ? isNightHour(_t.tm_hour) : false;
+            if (clock_wx_icon) lv_label_set_text(clock_wx_icon, wmoGlyph(clock_wx_wmo, _night));
+        }
         for (int i = 0; i < 6; i++) {
             lv_label_set_text(clock_wx_fc_day[i],  hourLabel(clock_wx_hourly[i].hour));
-            lv_label_set_text(clock_wx_fc_icon[i], wmoGlyph(clock_wx_hourly[i].wmo));
-            snprintf(buf, sizeof(buf), "%d°", clock_wx_hourly[i].temp);
+            lv_label_set_text(clock_wx_fc_icon[i], wmoGlyph(clock_wx_hourly[i].wmo,
+                                                             isNightHour(clock_wx_hourly[i].hour)));
+            snprintf(buf, sizeof(buf), "%d%s", clock_wx_hourly[i].temp, tempUnit());
             lv_label_set_text(clock_wx_fc_temp[i], buf);
         }
         lv_obj_clear_flag(clock_wx_tl_panel, LV_OBJ_FLAG_HIDDEN);
         if (clock_wx_bottom) lv_obj_clear_flag(clock_wx_bottom, LV_OBJ_FLAG_HIDDEN);
+
+        // ── Top-right panel: UV + feels-like + sunrise/sunset ─────────────────
+        if (clock_wx_tr_panel) {
+            snprintf(buf, sizeof(buf), "Feels like  %d%s", clock_wx_apparent, tempUnit());
+            lv_label_set_text(clock_wx_fl_lbl, buf);
+
+            snprintf(buf, sizeof(buf), "UV  %d  %s", clock_wx_uv, uvLabel(clock_wx_uv));
+            lv_label_set_text(clock_wx_uv_lbl, buf);
+            lv_obj_set_style_text_color(clock_wx_uv_lbl, uvColor(clock_wx_uv), 0);
+
+            snprintf(buf, sizeof(buf), "Rise  %s", clock_wx_sunrise);
+            lv_label_set_text(clock_wx_rise_t_lbl, buf);
+            snprintf(buf, sizeof(buf), "Set   %s", clock_wx_sunset);
+            lv_label_set_text(clock_wx_set_t_lbl, buf);
+
+            lv_obj_clear_flag(clock_wx_tr_panel, LV_OBJ_FLAG_HIDDEN);
+        }
     } else {
         lv_obj_add_flag(clock_wx_tl_panel, LV_OBJ_FLAG_HIDDEN);
-        if (clock_wx_bottom) lv_obj_add_flag(clock_wx_bottom, LV_OBJ_FLAG_HIDDEN);
+        if (clock_wx_bottom)    lv_obj_add_flag(clock_wx_bottom,    LV_OBJ_FLAG_HIDDEN);
+        if (clock_wx_tr_panel)  lv_obj_add_flag(clock_wx_tr_panel,  LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -304,12 +365,14 @@ static void fetchClockWeather() {
     // we skip when tm_min > 0, giving 6 strictly-future hours to display.
     // temperature_unit is passed directly so the API returns values in the right
     // unit — no client-side conversion needed.
-    char url[300];
+    char url[350];
     snprintf(url, sizeof(url),
         "https://api.open-meteo.com/v1/forecast"
         "?latitude=%.2f&longitude=%.2f"
-        "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m"
-        "&hourly=weather_code,temperature_2m&forecast_hours=7&timezone=auto"
+        "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,uv_index,apparent_temperature"
+        "&hourly=weather_code,temperature_2m&forecast_hours=7"
+        "&daily=sunrise,sunset&forecast_days=2"
+        "&timezone=auto"
         "&temperature_unit=%s",
         lat, lon, clock_wx_fahrenheit ? "fahrenheit" : "celsius");
 
@@ -332,9 +395,9 @@ static void fetchClockWeather() {
         if (wx_http.begin(wx_client, url)) {
             int code = wx_http.GET();
             if (code == HTTP_CODE_OK) {
-                // Response for 7 hourly entries is ~580 bytes; 2048 is generous.
+                // Response with hourly + daily + UV is ~900 bytes; 3072 is generous.
                 String body = wx_http.getString();
-                DynamicJsonDocument doc(2048);
+                DynamicJsonDocument doc(3072);
                 auto err = deserializeJson(doc, body);
                 body = String();  // Free immediately after parse
                 if (err == DeserializationError::Ok) {
@@ -342,6 +405,22 @@ static void fetchClockWeather() {
                     int humidity = doc["current"]["relative_humidity_2m"].as<int>();
                     int wmo      = doc["current"]["weather_code"].as<int>();
                     int wind     = (int)roundf(doc["current"]["wind_speed_10m"].as<float>());
+                    int uv_idx   = (int)roundf(doc["current"]["uv_index"].as<float>());
+                    int apparent = (int)roundf(doc["current"]["apparent_temperature"].as<float>());
+
+                    // Sunrise / sunset — daily[0] is today, format "2026-03-22T06:42"
+                    char sunrise_str[8] = "--:--";
+                    char sunset_str[8]  = "--:--";
+                    JsonArray d_rise = doc["daily"]["sunrise"].as<JsonArray>();
+                    JsonArray d_set  = doc["daily"]["sunset"].as<JsonArray>();
+                    if (d_rise.size() > 0) {
+                        const char* s = d_rise[0].as<const char*>();
+                        if (s && strlen(s) >= 16) { strncpy(sunrise_str, s + 11, 5); sunrise_str[5] = '\0'; }
+                    }
+                    if (d_set.size() > 0) {
+                        const char* s = d_set[0].as<const char*>();
+                        if (s && strlen(s) >= 16) { strncpy(sunset_str, s + 11, 5); sunset_str[5] = '\0'; }
+                    }
 
                     // Hourly forecast — next 6 FUTURE hours.
                     // Time format: "2025-02-24T15:00" — hour at chars [11..12].
@@ -375,12 +454,17 @@ static void fetchClockWeather() {
                     clock_wx_humidity = humidity;
                     clock_wx_wind     = wind;
                     clock_wx_wmo      = wmo;
+                    clock_wx_uv       = uv_idx;
+                    clock_wx_apparent = apparent;
+                    strncpy(clock_wx_sunrise, sunrise_str, sizeof(clock_wx_sunrise));
+                    strncpy(clock_wx_sunset,  sunset_str,  sizeof(clock_wx_sunset));
                     memcpy(clock_wx_hourly, hourly, sizeof(hourly));
                     clock_wx_valid        = true;
                     clock_weather_updated = true;
 
-                    Serial.printf("[CLKWX] %d°C wmo=%d hum=%d%% wind=%dkm/h hours=%d city=%s\n",
-                                  cur_temp, wmo, humidity, wind, arr_sz, clock_wx_city_name);
+                    Serial.printf("[CLKWX] %d°C feels=%d°C uv=%d rise=%s set=%s wmo=%d hum=%d%% wind=%dkm/h city=%s\n",
+                                  cur_temp, apparent, uv_idx, sunrise_str, sunset_str,
+                                  wmo, humidity, wind, clock_wx_city_name);
                     success = true;
                 } else {
                     Serial.printf("[CLKWX] JSON error: %s (attempt %d/2)\n", err.c_str(), attempt);
@@ -420,8 +504,17 @@ void clockBgTask(void* /*param*/) {
         int dl_total = 0;
 
         if (clock_picsum_enabled) {
-        dl_buf = (uint8_t*)heap_caps_malloc(
-            CLOCK_BG_MAX_DL_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            // DMA guard: skip photo if DMA is depleted. SDIO TX copy buffer (transport_drv.c:290)
+            // fails during HTTP SYN when session DMA loss ≥ -66KB — confirmed log16 crash3.
+            // Photo is non-critical; weather fetch runs regardless.
+            if (heap_caps_get_free_size(MALLOC_CAP_DMA) < CLOCK_BG_MIN_DMA) {
+                Serial.printf("[CLKBG] DMA too low (%uKB < %uKB) — skipping photo this cycle\n",
+                              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_DMA) / 1024),
+                              (unsigned)(CLOCK_BG_MIN_DMA / 1024));
+            } else {
+                dl_buf = (uint8_t*)heap_caps_malloc(
+                    CLOCK_BG_MAX_DL_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            }
         }
 
         if (dl_buf) {
@@ -733,6 +826,56 @@ void createClockScreen() {
         lv_obj_set_style_text_color(clock_wx_fc_temp[i], lv_color_hex(0xAAAAAA), 0);
         lv_label_set_text(clock_wx_fc_temp[i], "--°");
     }
+
+    // ── Top-right panel: feels-like + UV + sunrise/sunset ────────────────────
+    // Right-aligned column, flush to the right edge (mirrors left panel's 10px margin).
+    // Panel x=490, width=300 → right edge at 790 (10px from screen edge).
+    // All labels span full panel width and are right-aligned.
+    clock_wx_tr_panel = lv_obj_create(scr_clock);
+    lv_obj_set_pos(clock_wx_tr_panel, 490, 10);
+    lv_obj_set_size(clock_wx_tr_panel, 300, 110);
+    lv_obj_set_style_bg_opa(clock_wx_tr_panel, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(clock_wx_tr_panel, 0, 0);
+    lv_obj_set_style_pad_all(clock_wx_tr_panel, 0, 0);
+    lv_obj_clear_flag(clock_wx_tr_panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(clock_wx_tr_panel, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(clock_wx_tr_panel, LV_OBJ_FLAG_HIDDEN);
+
+    // Row 0 — Feels like
+    clock_wx_fl_lbl = lv_label_create(clock_wx_tr_panel);
+    lv_label_set_text(clock_wx_fl_lbl, "Feels like  --");
+    lv_obj_set_width(clock_wx_fl_lbl, 300);
+    lv_obj_set_style_text_align(clock_wx_fl_lbl, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_text_font(clock_wx_fl_lbl, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_color(clock_wx_fl_lbl, lv_color_hex(0x999999), 0);
+    lv_obj_set_pos(clock_wx_fl_lbl, 0, 0);
+
+    // Row 1 — UV index
+    clock_wx_uv_lbl = lv_label_create(clock_wx_tr_panel);
+    lv_label_set_text(clock_wx_uv_lbl, "UV  --");
+    lv_obj_set_width(clock_wx_uv_lbl, 300);
+    lv_obj_set_style_text_align(clock_wx_uv_lbl, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_text_font(clock_wx_uv_lbl, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_color(clock_wx_uv_lbl, lv_color_hex(0x999999), 0);
+    lv_obj_set_pos(clock_wx_uv_lbl, 0, 26);
+
+    // Row 2 — Sunrise
+    clock_wx_rise_t_lbl = lv_label_create(clock_wx_tr_panel);
+    lv_label_set_text(clock_wx_rise_t_lbl, "Rise  --:--");
+    lv_obj_set_width(clock_wx_rise_t_lbl, 300);
+    lv_obj_set_style_text_align(clock_wx_rise_t_lbl, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_text_font(clock_wx_rise_t_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(clock_wx_rise_t_lbl, lv_color_hex(0x777777), 0);
+    lv_obj_set_pos(clock_wx_rise_t_lbl, 0, 56);
+
+    // Row 3 — Sunset
+    clock_wx_set_t_lbl = lv_label_create(clock_wx_tr_panel);
+    lv_label_set_text(clock_wx_set_t_lbl, "Set   --:--");
+    lv_obj_set_width(clock_wx_set_t_lbl, 300);
+    lv_obj_set_style_text_align(clock_wx_set_t_lbl, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_text_font(clock_wx_set_t_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(clock_wx_set_t_lbl, lv_color_hex(0x777777), 0);
+    lv_obj_set_pos(clock_wx_set_t_lbl, 0, 78);
 
     // (Tap-to-dismiss: whole screen is clickable, so no separate hint needed)
 

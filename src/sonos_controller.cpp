@@ -719,8 +719,14 @@ String SonosController::browseContent(const char* objectID, int startIndex, int 
 
     String resp = sendSOAP("ContentDirectory", "Browse", args);
 
-    // Extract and decode DIDL
+    // Extract and decode DIDL. Auto-retry once on empty response (HTTP 500 transient).
     String didl = extractXML(resp, "Result");
+    if (didl.length() == 0 && resp.length() == 0) {
+        Serial.printf("[BROWSE] Empty response for %s — retrying\n", objectID);
+        vTaskDelay(pdMS_TO_TICKS(500));
+        resp = sendSOAP("ContentDirectory", "Browse", args);
+        didl = extractXML(resp, "Result");
+    }
     didl = decodeHTMLEntities(didl);
 
     return didl;
@@ -764,6 +770,49 @@ bool SonosController::playPlaylist(const char* playlistID, const char* title) {
     }
 
     Serial.printf("[PLAYLIST] Loading playlist: %s (%s)\n", playlistID, title);
+
+    // Switch transport to queue mode BEFORE clearing/loading.
+    // When a radio station is the current transport (x-rincon-mp3radio:// etc),
+    // SetAVTransportURI(x-rincon-queue:...) returns HTTP 500 later in the flow
+    // because Sonos hasn't released the radio transport yet. Switching to queue
+    // mode first makes the subsequent SetAVTransportURI a no-op (already queue)
+    // so it always succeeds.
+    // Skip pre-switch entirely if already in queue mode — avoids a redundant SOAP
+    // that could reset the transport position on devices that are already playing queue.
+    {
+        bool alreadyQueue = dev->currentURI.indexOf("rincon-queue") >= 0 ||
+                            dev->currentURI.indexOf("x-rincon-queue") >= 0;
+        if (alreadyQueue) {
+            Serial.println("[PLAYLIST] Already in queue transport mode — skipping pre-switch");
+        } else {
+            static char switchArgs[256];
+            static char switchURI[128];
+            snprintf(switchURI, sizeof(switchURI), "x-rincon-queue:%s#0", dev->rinconID.c_str());
+            snprintf(switchArgs, sizeof(switchArgs),
+                "<InstanceID>0</InstanceID>"
+                "<CurrentURI>%s</CurrentURI>"
+                "<CurrentURIMetaData></CurrentURIMetaData>",
+                switchURI);
+            // 3-attempt retry with increasing delays. Sonos may need up to 2 attempts
+            // to release the radio transport before accepting the queue switch.
+            // Delays: 200ms, 350ms, 500ms — covers slow/overloaded speakers.
+            static const int preDelays[] = {200, 350, 500};
+            String preResp;
+            for (int a = 0; a < 3; a++) {
+                preResp = sendSOAP("AVTransport", "SetAVTransportURI", switchArgs);
+                if (preResp.length() > 0 && preResp.indexOf("Fault") < 0) break;
+                Serial.printf("[PLAYLIST] Pre-switch attempt %d failed — retrying\n", a + 1);
+                vTaskDelay(pdMS_TO_TICKS(preDelays[a]));
+            }
+            if (preResp.length() == 0 || preResp.indexOf("Fault") >= 0) {
+                Serial.println("[PLAYLIST] Pre-switch failed after 3 attempts — proceeding anyway");
+            }
+            // 300ms: Sonos may confirm transport switch (HTTP 200) before fully committing
+            // queue mode internally. RemoveAllTracksFromQueue fired too soon can land in
+            // the transition window and return 500. 300ms > typical Sonos async settle.
+            vTaskDelay(pdMS_TO_TICKS(300));
+        }
+    }
 
     sendSOAP("AVTransport", "RemoveAllTracksFromQueue", "<InstanceID>0</InstanceID>");
     // 500ms: Sonos enters a brief transient state after RemoveAllTracksFromQueue
@@ -833,8 +882,29 @@ bool SonosController::playPlaylist(const char* playlistID, const char* title) {
             "<CurrentURIMetaData></CurrentURIMetaData>",
             queueURI);
 
+        // 3-retry loop: SetAVTransportURI can return HTTP 500 when Sonos is still
+        // processing the AddURIToQueue expansion internally (radio → queue transition).
+        // Identical pattern to AddURIToQueue retry above.
+        String setResp;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            setResp = sendSOAP("AVTransport", "SetAVTransportURI", setArgs);
+            if (setResp.length() > 0 && setResp.indexOf("Fault") < 0) {
+                break;
+            }
+            Serial.printf("[PLAYLIST] SetAVTransportURI attempt %d failed, retrying\n", attempt + 1);
+            vTaskDelay(pdMS_TO_TICKS(400));
+        }
+        if (setResp.length() == 0 || setResp.indexOf("Fault") >= 0) {
+            Serial.println("[PLAYLIST] Failed to set transport URI");
+            return false;
+        }
+
         Serial.println("[PLAYLIST] Playlist loaded and playing");
-        sendSOAP("AVTransport", "SetAVTransportURI", setArgs);
+        vTaskDelay(pdMS_TO_TICKS(100));
+        // Seek to track 1 before Play — queue was just rebuilt from scratch so position
+        // may be at 0/undefined; without Seek, Sonos may start from a stale position.
+        sendSOAP("AVTransport", "Seek",
+            "<InstanceID>0</InstanceID><Unit>TRACK_NR</Unit><Target>1</Target>");
         vTaskDelay(pdMS_TO_TICKS(100));
         sendSOAP("AVTransport", "Play", "<InstanceID>0</InstanceID><Speed>1</Speed>");
         vTaskDelay(pdMS_TO_TICKS(300));
@@ -1001,14 +1071,15 @@ void SonosController::notifyUI(UIUpdateType_e type) {
 }
 
 // Helper: Detect if URI is a radio station
-// Based on research: x-sonosapi-stream:, x-rincon-mp3radio:, x-sonosapi-radio:, aac://, hls-radio:
+// Based on research: x-sonosapi-stream:, x-rincon-mp3radio:, x-sonosapi-radio:, hls-radio:
 // x-sonosapi-hls: = BBC Sounds live radio (NOT x-sonosapi-hls-static: which is on-demand podcasts)
+// NOTE: aac:// is intentionally NOT here — Apple Music tracks also use aac:// URIs when played
+// from a queue. Radio detection for aac:// is handled at the call site using queueSize.
 static bool isRadioURI(const String& uri) {
     return uri.startsWith("x-sonosapi-stream:") ||
            uri.startsWith("x-rincon-mp3radio:") ||
            uri.startsWith("x-sonosapi-radio:") ||
            uri.startsWith("x-sonosapi-hls:") ||
-           uri.startsWith("aac://") ||
            uri.startsWith("hls-radio:");
 }
 
@@ -1079,7 +1150,10 @@ bool SonosController::updateTrackInfo() {
         // Extract TrackURI and detect radio
         String trackURI = extractXML(resp, "TrackURI");
         dev->currentURI = trackURI;
-        dev->isRadioStation = isRadioURI(trackURI);
+        // aac:// is used by both live AAC radio streams AND Apple Music/streaming service
+        // tracks played from a queue. Treat as radio only when the queue is empty.
+        dev->isRadioStation = isRadioURI(trackURI) ||
+                              (trackURI.startsWith("aac://") && dev->queueSize == 0);
 
         // Get metadata and decode HTML entities
         String meta = extractXML(resp, "TrackMetaData");

@@ -19,7 +19,7 @@
 #define DEFAULT_WIFI_PASSWORD ""
 
 // Firmware version
-#define FIRMWARE_VERSION "1.6.3"
+#define FIRMWARE_VERSION "1.7.0"
 #define GITHUB_REPO "OpenSurface/SonosESP"
 #define GITHUB_API_URL "https://api.github.com/repos/" GITHUB_REPO "/releases/latest"
 
@@ -98,6 +98,12 @@ extern SemaphoreHandle_t art_mutex;
 extern uint32_t dominant_color;
 extern volatile bool color_ready;
 extern int art_offset_x, art_offset_y;
+
+// Blur background — blurred art scaled to full screen (replaces ambient color animation)
+extern lv_img_dsc_t blur_bg_dsc;
+extern uint16_t*    blur_bg_buf;
+extern volatile bool blur_bg_ready;
+extern lv_obj_t*    img_blur_bg;
 extern bool is_sonos_radio_art;
 extern bool pending_is_station_logo;
 
@@ -107,6 +113,7 @@ extern volatile unsigned long last_network_end_ms;
 extern volatile unsigned long last_https_end_ms;
 extern volatile unsigned long last_queue_fetch_time;
 extern volatile bool          art_download_in_progress;
+extern volatile bool          art_dma_recovery_requested;  // Set by art task; mainAppTask handles WiFi stop+reconnect/restart
 extern volatile unsigned long last_art_download_end_ms;
 extern volatile unsigned long last_track_change_ms;
 extern volatile unsigned long last_transient_500_ms;

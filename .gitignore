@@ -12,6 +12,9 @@ RELEASE_INSTRUCTIONS.md
 CODE_REVIEW_ACTION_PLAN.md
 FLOWS.md
 
+# Node.js (font generation tooling — @mdi/font + lv_font_conv)
+node_modules/
+
 # Build artifacts
 *.bin
 *.elf

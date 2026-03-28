@@ -411,9 +411,10 @@ void logHeapStatus() {
     size_t free_heap = esp_get_free_heap_size();
     size_t min_heap = esp_get_minimum_free_heap_size();
     size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    size_t free_dma = heap_caps_get_free_size(MALLOC_CAP_DMA);
 
-    Serial.printf("[HEAP] Free: %dKB | Min: %dKB | PSRAM: %dKB\n",
-                  free_heap / 1024, min_heap / 1024, free_psram / 1024);
+    Serial.printf("[HEAP] Free: %dKB | Min: %dKB | PSRAM: %dKB | DMA: %dKB\n",
+                  free_heap / 1024, min_heap / 1024, free_psram / 1024, free_dma / 1024);
 
     // Log task stack high water marks — minimum free bytes ever observed.
     // On ESP-IDF 5.x (ESP32-P4 RISC-V), uxTaskGetStackHighWaterMark returns bytes directly.
@@ -425,9 +426,14 @@ void logHeapStatus() {
     Serial.printf("ClkBg:%d ", clockBgTaskHandle ? uxTaskGetStackHighWaterMark(clockBgTaskHandle) : 0);
     Serial.printf("Lyrics:%d bytes free\n", lyricsTaskHandle ? uxTaskGetStackHighWaterMark(lyricsTaskHandle) : 0);
 
-    // Warn if heap is getting low
+    // Warn if heap or DMA is getting low
     if (free_heap < 50000) {
         Serial.println("[HEAP] WARNING: Low memory!");
+    }
+    if (free_dma < 70000) {
+        Serial.printf("[DMA] WARNING: DMA depleting (%dKB) — art/lyrics may abort. "
+                      "Session depletion ~3.7KB/song. WiFi reconnect fires at 3 consecutive aborts.\n",
+                      (int)(free_dma / 1024));
     }
 }
 
@@ -456,6 +462,99 @@ static void mainAppTask(void* param) {
             checkClockTrigger();
             checkWiFiReconnect();
             logHeapStatus();  // Periodic memory monitoring
+
+            // ── DMA recovery handler ─────────────────────────────────────────────
+            // Art task (PSRAM stack) cannot call esp_restart() or Preferences.begin()
+            // directly — both call spi_flash_disable_interrupts_caches_and_other_cpu()
+            // which asserts esp_task_stack_is_sane_cache_disabled() → cache_utils.c:127.
+            // mainAppTask has an internal SRAM stack so both are safe here.
+            if (art_dma_recovery_requested) {
+                Serial.println("[MAIN] DMA recovery: stopping WiFi to release dynamic RX pool");
+                WiFi.disconnect(true);   // esp_wifi_stop() releases ~51KB WiFi dynamic RX buffers
+                esp_task_wdt_reset();
+                // Keep UI responsive during WiFi stop drain (2s) — pump LVGL in 5ms ticks
+                { unsigned long t_drain = millis();
+                  while (millis() - t_drain < 2000) {
+                      lv_tick_inc(5); lv_timer_handler();
+                      esp_task_wdt_reset();
+                      vTaskDelay(pdMS_TO_TICKS(5));
+                  }
+                }
+
+                size_t dma_after = heap_caps_get_free_size(MALLOC_CAP_DMA);
+                Serial.printf("[MAIN] DMA after WiFi stop: %u (need >%u)\n",
+                              (unsigned)dma_after, (unsigned)ART_MIN_DMA_PRE_BURST);
+
+                if (dma_after > ART_MIN_DMA_PRE_BURST) {
+                    // DMA recovered — reconnect using saved credentials (NVS safe from SRAM stack)
+                    Preferences prefs;
+                    prefs.begin(NVS_NAMESPACE, true);
+                    String ssid = prefs.getString(NVS_KEY_SSID, "");
+                    String pass = prefs.getString(NVS_KEY_PASSWORD, "");
+                    prefs.end();
+                    Serial.printf("[MAIN] Reconnecting WiFi to '%s'\n", ssid.c_str());
+                    WiFi.begin(ssid.c_str(), pass.c_str());
+                    // Keep UI responsive during reconnect (up to 30s) — pump LVGL in 5ms ticks.
+                    // Retry WiFi.begin() at 15s: mesh routers (ORBI95 etc.) sometimes miss the
+                    // first scan but respond immediately to a second attempt.
+                    unsigned long t = millis();
+                    while (WiFi.status() != WL_CONNECTED && millis() - t < 30000) {
+                        lv_tick_inc(5); lv_timer_handler();
+                        esp_task_wdt_reset();
+                        vTaskDelay(pdMS_TO_TICKS(5));
+                        if (WiFi.status() != WL_CONNECTED && millis() - t >= 15000 && millis() - t < 15100) {
+                            Serial.println("[MAIN] WiFi still not connected at 15s — retrying WiFi.begin()");
+                            WiFi.begin(ssid.c_str(), pass.c_str());
+                        }
+                    }
+                    if (WiFi.status() == WL_CONNECTED) {
+                        Serial.printf("[MAIN] WiFi reconnected — DMA=%uKB, stabilising...\n",
+                                      (unsigned)(heap_caps_get_free_size(MALLOC_CAP_DMA) / 1024));
+                        // Suppress polling during the stabilisation window.
+                        // Without this: pollingTask resumes SOAPs immediately after reconnect,
+                        // each SOAP creates a TIME_WAIT PCB (~4KB DMA, 12s expiry). Four SOAPs
+                        // consume 16KB → DMA drops from 74KB back below 70KB threshold →
+                        // art task triggers abort #4 → cascade. With flag set, pollingTask hits
+                        // the early-exit guard and sleeps each cycle → no new PCBs → DMA climbs
+                        // as pre-existing PCBs expire (TCP_MSL*2 = 12s).
+                        art_download_in_progress = true;
+
+                        // Wait for DMA to stabilise above ART_MIN_DMA_PRE_BURST + headroom.
+                        // TCP_MSL*2 (12s) → after ~15s all burst PCBs have expired.
+                        // Early-exit if DMA > threshold + 10KB (80KB) — enough headroom.
+                        {
+                            unsigned long t_stab = millis();
+                            const size_t kComfortDMA = ART_MIN_DMA_PRE_BURST + 10000;  // 80KB
+                            while (millis() - t_stab < 15000) {
+                                lv_tick_inc(5); lv_timer_handler();
+                                esp_task_wdt_reset();
+                                vTaskDelay(pdMS_TO_TICKS(5));
+                                if (heap_caps_get_free_size(MALLOC_CAP_DMA) > kComfortDMA) break;
+                            }
+                            Serial.printf("[MAIN] Post-reconnect DMA: %uKB (stabilised in %lums)\n",
+                                          (unsigned)(heap_caps_get_free_size(MALLOC_CAP_DMA) / 1024),
+                                          millis() - t_stab);
+                        }
+                        // Release polling suppression before signalling art task.
+                        // Art task re-sets the flag itself after sdioPreWait on its next iteration.
+                        art_download_in_progress = false;
+                        art_dma_recovery_requested = false;  // signal art task: retry download
+                    } else {
+                        Serial.println("[MAIN] WiFi reconnect timed out — restarting");
+                        esp_task_wdt_reset();
+                        vTaskDelay(pdMS_TO_TICKS(1000));
+                        esp_restart();
+                    }
+                } else {
+                    // WiFi.stop() didn't help — DMA permanently fragmented, restart required
+                    Serial.printf("[MAIN] DMA still low after WiFi stop (%u) — restarting\n",
+                                  (unsigned)dma_after);
+                    esp_task_wdt_reset();
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    esp_restart();
+                }
+            }
+            // ────────────────────────────────────────────────────────────────────
         }
 
         vTaskDelay(pdMS_TO_TICKS(3));

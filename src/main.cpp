@@ -508,8 +508,36 @@ static void mainAppTask(void* param) {
                         }
                     }
                     if (WiFi.status() == WL_CONNECTED) {
-                        Serial.printf("[MAIN] WiFi reconnected — DMA=%uKB, resuming art\n",
+                        Serial.printf("[MAIN] WiFi reconnected — DMA=%uKB, stabilising...\n",
                                       (unsigned)(heap_caps_get_free_size(MALLOC_CAP_DMA) / 1024));
+                        // Suppress polling during the stabilisation window.
+                        // Without this: pollingTask resumes SOAPs immediately after reconnect,
+                        // each SOAP creates a TIME_WAIT PCB (~4KB DMA, 12s expiry). Four SOAPs
+                        // consume 16KB → DMA drops from 74KB back below 70KB threshold →
+                        // art task triggers abort #4 → cascade. With flag set, pollingTask hits
+                        // the early-exit guard and sleeps each cycle → no new PCBs → DMA climbs
+                        // as pre-existing PCBs expire (TCP_MSL*2 = 12s).
+                        art_download_in_progress = true;
+
+                        // Wait for DMA to stabilise above ART_MIN_DMA_PRE_BURST + headroom.
+                        // TCP_MSL*2 (12s) → after ~15s all burst PCBs have expired.
+                        // Early-exit if DMA > threshold + 10KB (80KB) — enough headroom.
+                        {
+                            unsigned long t_stab = millis();
+                            const size_t kComfortDMA = ART_MIN_DMA_PRE_BURST + 10000;  // 80KB
+                            while (millis() - t_stab < 15000) {
+                                lv_tick_inc(5); lv_timer_handler();
+                                esp_task_wdt_reset();
+                                vTaskDelay(pdMS_TO_TICKS(5));
+                                if (heap_caps_get_free_size(MALLOC_CAP_DMA) > kComfortDMA) break;
+                            }
+                            Serial.printf("[MAIN] Post-reconnect DMA: %uKB (stabilised in %lums)\n",
+                                          (unsigned)(heap_caps_get_free_size(MALLOC_CAP_DMA) / 1024),
+                                          millis() - t_stab);
+                        }
+                        // Release polling suppression before signalling art task.
+                        // Art task re-sets the flag itself after sdioPreWait on its next iteration.
+                        art_download_in_progress = false;
                         art_dma_recovery_requested = false;  // signal art task: retry download
                     } else {
                         Serial.println("[MAIN] WiFi reconnect timed out — restarting");

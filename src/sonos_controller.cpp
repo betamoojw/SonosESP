@@ -771,6 +771,49 @@ bool SonosController::playPlaylist(const char* playlistID, const char* title) {
 
     Serial.printf("[PLAYLIST] Loading playlist: %s (%s)\n", playlistID, title);
 
+    // Switch transport to queue mode BEFORE clearing/loading.
+    // When a radio station is the current transport (x-rincon-mp3radio:// etc),
+    // SetAVTransportURI(x-rincon-queue:...) returns HTTP 500 later in the flow
+    // because Sonos hasn't released the radio transport yet. Switching to queue
+    // mode first makes the subsequent SetAVTransportURI a no-op (already queue)
+    // so it always succeeds.
+    // Skip pre-switch entirely if already in queue mode — avoids a redundant SOAP
+    // that could reset the transport position on devices that are already playing queue.
+    {
+        bool alreadyQueue = dev->currentURI.indexOf("rincon-queue") >= 0 ||
+                            dev->currentURI.indexOf("x-rincon-queue") >= 0;
+        if (alreadyQueue) {
+            Serial.println("[PLAYLIST] Already in queue transport mode — skipping pre-switch");
+        } else {
+            static char switchArgs[256];
+            static char switchURI[128];
+            snprintf(switchURI, sizeof(switchURI), "x-rincon-queue:%s#0", dev->rinconID.c_str());
+            snprintf(switchArgs, sizeof(switchArgs),
+                "<InstanceID>0</InstanceID>"
+                "<CurrentURI>%s</CurrentURI>"
+                "<CurrentURIMetaData></CurrentURIMetaData>",
+                switchURI);
+            // 3-attempt retry with increasing delays. Sonos may need up to 2 attempts
+            // to release the radio transport before accepting the queue switch.
+            // Delays: 200ms, 350ms, 500ms — covers slow/overloaded speakers.
+            static const int preDelays[] = {200, 350, 500};
+            String preResp;
+            for (int a = 0; a < 3; a++) {
+                preResp = sendSOAP("AVTransport", "SetAVTransportURI", switchArgs);
+                if (preResp.length() > 0 && preResp.indexOf("Fault") < 0) break;
+                Serial.printf("[PLAYLIST] Pre-switch attempt %d failed — retrying\n", a + 1);
+                vTaskDelay(pdMS_TO_TICKS(preDelays[a]));
+            }
+            if (preResp.length() == 0 || preResp.indexOf("Fault") >= 0) {
+                Serial.println("[PLAYLIST] Pre-switch failed after 3 attempts — proceeding anyway");
+            }
+            // 300ms: Sonos may confirm transport switch (HTTP 200) before fully committing
+            // queue mode internally. RemoveAllTracksFromQueue fired too soon can land in
+            // the transition window and return 500. 300ms > typical Sonos async settle.
+            vTaskDelay(pdMS_TO_TICKS(300));
+        }
+    }
+
     sendSOAP("AVTransport", "RemoveAllTracksFromQueue", "<InstanceID>0</InstanceID>");
     // 500ms: Sonos enters a brief transient state after RemoveAllTracksFromQueue
     // and returns HTTP 500 for subsequent AddURIToQueue if we fire too quickly.
@@ -857,6 +900,11 @@ bool SonosController::playPlaylist(const char* playlistID, const char* title) {
         }
 
         Serial.println("[PLAYLIST] Playlist loaded and playing");
+        vTaskDelay(pdMS_TO_TICKS(100));
+        // Seek to track 1 before Play — queue was just rebuilt from scratch so position
+        // may be at 0/undefined; without Seek, Sonos may start from a stale position.
+        sendSOAP("AVTransport", "Seek",
+            "<InstanceID>0</InstanceID><Unit>TRACK_NR</Unit><Target>1</Target>");
         vTaskDelay(pdMS_TO_TICKS(100));
         sendSOAP("AVTransport", "Play", "<InstanceID>0</InstanceID><Speed>1</Speed>");
         vTaskDelay(pdMS_TO_TICKS(300));

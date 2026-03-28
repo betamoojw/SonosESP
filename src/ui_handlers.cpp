@@ -4,6 +4,7 @@
  */
 
 #include "ui_common.h"
+#include "ui_icons.h"
 #include <vector>
 #include "config.h"
 #include "lyrics.h"
@@ -1448,7 +1449,8 @@ static bool updateConnectionState(SonosDevice* d) {
             if (panel_right) lv_obj_set_style_bg_color(panel_right, COL_BG, 0);
 
             lv_obj_t* lbl = lv_obj_get_child(btn_play, 0);
-            lv_label_set_text(lbl, LV_SYMBOL_PAUSE);
+            lv_label_set_text(lbl, MDI_PAUSE);
+            lv_obj_set_style_text_font(lbl, &lv_font_mdi_40, 0);
             lv_obj_center(lbl);
 
             ui_title = "";
@@ -1787,6 +1789,13 @@ void updateUI() {
     if (lyrics_key != lyrics_last_track && d->currentTrack.length() > 0) {
         last_track_change_ms = millis();
         if (lyrics_enabled && !d->isRadioStation) {
+            // Abort any running task FIRST. requestLyrics() checks artist.length()==0
+            // at line 1 and returns false without ever touching lyrics_abort_requested —
+            // so for podcasts/audiobooks the old task keeps running, finishes, writes
+            // stale lyrics into the buffer, and main thread displays them even after
+            // clearLyrics(). Setting the flag here stops the old task before clear.
+            lyrics_abort_requested = true;
+            clearLyrics();
             // requestLyrics() returns false if the previous task is still running
             // (e.g. blocked inside http.GET() with up to 10s timeout). In that case
             // we do NOT update lyrics_last_track — the condition fires again next
@@ -1794,6 +1803,10 @@ void updateUI() {
             // This prevents TCB/stack reuse while the old task is alive, which would
             // permanently leak ~32KB of TLS DMA buffers per rapid track change.
             if (requestLyrics(d->currentArtist, d->currentTrack, d->durationSeconds)) {
+                lyrics_last_track = lyrics_key;
+            } else if (!lyrics_fetching) {
+                // Task not running and spawn failed (e.g. empty artist for podcast/audiobook,
+                // buffer not initialised). Accept "no lyrics" to avoid a per-frame retry loop.
                 lyrics_last_track = lyrics_key;
             }
         } else {
@@ -1822,12 +1835,14 @@ void updateUI() {
     if (t.startsWith("0:")) t = t.substring(2);
     lv_label_set_text(lbl_time, t.c_str());
 
-    // Total duration
+    // Remaining time as negative countdown: -M:SS (Apple Music / Spotify style)
     if (d->durationSeconds > 0) {
-        int dm = d->durationSeconds / 60;
-        int ds = d->durationSeconds % 60;
+        int rem = d->durationSeconds - d->relTimeSeconds;
+        if (rem < 0) rem = 0;
+        int rm = rem / 60;
+        int rs = rem % 60;
         char buf[16];
-        snprintf(buf, sizeof(buf), "%d:%02d", dm, ds);
+        snprintf(buf, sizeof(buf), "-%d:%02d", rm, rs);
         lv_label_set_text(lbl_time_remaining, buf);
     }
 
@@ -1842,14 +1857,9 @@ void updateUI() {
     // Play/Pause button
     if (d->isPlaying != ui_playing) {
         lv_obj_t* lbl = lv_obj_get_child(btn_play, 0);
-        lv_label_set_text(lbl, d->isPlaying ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
-
-        // Center the icon properly - play triangle needs offset to look centered
-        if (d->isPlaying) {
-            lv_obj_center(lbl);  // Pause is centered
-        } else {
-            lv_obj_align(lbl, LV_ALIGN_CENTER, 2, 0);  // Play needs 2px right offset
-        }
+        lv_label_set_text(lbl, d->isPlaying ? MDI_PAUSE : MDI_PLAY);
+        lv_obj_set_style_text_font(lbl, &lv_font_mdi_40, 0);
+        lv_obj_center(lbl);  // MDI icons are optically centered — no offset needed
 
         ui_playing = d->isPlaying;
     }
@@ -1882,13 +1892,16 @@ void updateUI() {
     if (d->repeatMode != ui_repeat) {
         lv_obj_t* lbl = lv_obj_get_child(btn_repeat, 0);
         if (d->repeatMode == "ONE") {
-            lv_label_set_text(lbl, "1");
+            lv_label_set_text(lbl, MDI_REPEAT_ONCE);
+            lv_obj_set_style_text_font(lbl, &lv_font_mdi_32, 0);
             lv_obj_set_style_text_color(lbl, COL_ACCENT, 0);
         } else if (d->repeatMode == "ALL") {
-            lv_label_set_text(lbl, LV_SYMBOL_LOOP);
+            lv_label_set_text(lbl, MDI_REPEAT);
+            lv_obj_set_style_text_font(lbl, &lv_font_mdi_32, 0);
             lv_obj_set_style_text_color(lbl, COL_ACCENT, 0);
         } else {
-            lv_label_set_text(lbl, LV_SYMBOL_LOOP);
+            lv_label_set_text(lbl, MDI_REPEAT);
+            lv_obj_set_style_text_font(lbl, &lv_font_mdi_32, 0);
             lv_obj_set_style_text_color(lbl, COL_TEXT2, 0);
         }
         ui_repeat = d->repeatMode;

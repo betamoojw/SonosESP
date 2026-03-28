@@ -5,6 +5,7 @@
 
 #include "sonos_controller.h"
 #include "ui_common.h"
+#include <esp_task_wdt.h>
 
 // ============================================================================
 // Discovery
@@ -136,6 +137,7 @@ int SonosController::discoverDevices() {
     Serial.printf("[SONOS] Fetching room names for %d device(s)...\n", deviceCount);
     for (int i = 0; i < deviceCount; i++) {
         Serial.printf("[SONOS] Fetching room name %d/%d from %s\n", i + 1, deviceCount, devices[i].ip.toString().c_str());
+        esp_task_wdt_reset();  // Each getRoomName() takes ~1-2s; 17 devices × 2s = 34s > 30s WDT
         getRoomName(&devices[i]);
         Serial.printf("[SONOS]   -> Room name: '%s'\n", devices[i].roomName.c_str());
 
@@ -153,6 +155,7 @@ int SonosController::discoverDevices() {
     String coordinatorRINCONs[MAX_COORDINATORS];
     int coordCount = 0;
     if (deviceCount > 0) {
+        esp_task_wdt_reset();  // getRoomName loop may have consumed most of the WDT window
         Serial.printf("[SONOS] Fetching zone topology from %s...\n", devices[0].ip.toString().c_str());
         coordCount = fetchTopologyCoordinators(devices[0].ip, coordinatorRINCONs, MAX_COORDINATORS);
         if (coordCount == 0) {
@@ -275,6 +278,9 @@ int SonosController::fetchTopologyCoordinators(IPAddress ip, String* coordinator
     http.addHeader("Content-Type", "text/xml; charset=\"utf-8\"");
     http.addHeader("SOAPAction", "\"urn:schemas-upnp-org:service:ZoneGroupTopology:1#GetZoneGroupState\"");
 
+    esp_task_wdt_reset();  // belt-and-suspenders: http.setTimeout(3000) bounds this call
+                           // but WDT reset ensures no 30s window overrun even if timeout
+                           // fires at the edge of the window (e.g. 17 × 2s = 34s loop)
     int count = 0;
     int code = http.POST((uint8_t*)soapBody, strlen(soapBody));
     if (code == 200) {

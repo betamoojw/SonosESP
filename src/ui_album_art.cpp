@@ -64,6 +64,53 @@ static bool artParseHttpHost(const char* url, char* host_buf, size_t host_buf_le
     return true;
 }
 
+// Strip HTTP chunked transfer encoding in-place.
+// Sonos getaa at :1400 ignores HTTP/1.0 requests and returns chunked for x-sonos-http
+// sources (BBC Sounds, Audible, Amazon Music). Without dechunking, the buffer starts with
+// "1000\r\n" (hex chunk-size header) before the JPEG/PNG magic bytes, causing format
+// detection to fail and art to show as placeholder.
+// Returns the new data length; leaves buf unchanged and returns len if not chunked.
+static size_t dechunkBuffer(uint8_t* buf, size_t len) {
+    if (len < 5) return len;
+    // Quick check: chunked data starts with ASCII hex digit(s) followed by \r\n
+    uint8_t c0 = buf[0];
+    bool firstIsHex = (c0 >= '0' && c0 <= '9') || (c0 >= 'a' && c0 <= 'f') || (c0 >= 'A' && c0 <= 'F');
+    if (!firstIsHex) return len;
+    // Confirm by finding \r\n within the first 10 bytes
+    bool hasCRLF = false;
+    for (int i = 1; i < 10 && i < (int)len - 1; i++) {
+        if (buf[i] == '\r' && buf[i+1] == '\n') { hasCRLF = true; break; }
+    }
+    if (!hasCRLF) return len;
+
+    uint8_t* src = buf;
+    uint8_t* dst = buf;
+    const uint8_t* end = buf + len;
+    size_t newLen = 0;
+
+    while (src < end) {
+        // Parse hex chunk size
+        char sizeBuf[16]; int sLen = 0;
+        while (src < end && sLen < 15) {
+            uint8_t ch = *src;
+            if ((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F'))
+                { sizeBuf[sLen++] = ch; src++; }
+            else break;
+        }
+        sizeBuf[sLen] = '\0';
+        if (sLen == 0) break;
+        if (src + 2 <= end && src[0] == '\r' && src[1] == '\n') src += 2;
+        size_t chunkSz = (size_t)strtoul(sizeBuf, nullptr, 16);
+        if (chunkSz == 0) break;  // terminal chunk
+        size_t avail = (size_t)(end - src);
+        if (chunkSz > avail) chunkSz = avail;
+        if (dst != src) memmove(dst, src, chunkSz);
+        dst += chunkSz; src += chunkSz; newLen += chunkSz;
+        if (src + 2 <= end && src[0] == '\r' && src[1] == '\n') src += 2;
+    }
+    return (newLen > 0) ? newLen : len;
+}
+
 // Pre-connect HTTP socket with SO_RCVBUF set BEFORE TCP SYN.
 // Returns connected WiFiClient on success, unconnected on failure (caller falls back to http.begin(url)).
 static WiFiClient artPreConnectHTTP(const char* url, int timeout_ms) {
@@ -1137,8 +1184,14 @@ void albumArtTask(void* param) {
                         // Wait for mainAppTask to complete recovery.
                         // If restart: esp_restart() fires from SRAM stack — we never return.
                         // If reconnect: mainAppTask clears the flag when WiFi is back up.
+                        // 55s timeout: worst-case mainAppTask takes 2s WiFi-stop drain
+                        // + 30s reconnect + 15s DMA stabilisation + 5s buffer = 52s.
+                        // Original 25s caused art task to time out mid-reconnect, reset
+                        // dma_fail_count to 0, re-enter the abort loop, hit 3 aborts again
+                        // at ~second 31, and request a SECOND recovery while mainAppTask
+                        // was still inside WiFi.begin() — cascading reconnect loop.
                         unsigned long t_rec = millis();
-                        while (art_dma_recovery_requested && millis() - t_rec < 25000) {
+                        while (art_dma_recovery_requested && millis() - t_rec < 55000) {
                             vTaskDelay(pdMS_TO_TICKS(500));
                         }
                         dma_fail_count = 0;
@@ -1568,6 +1621,11 @@ void albumArtTask(void* param) {
                             // sends our FIN → LAST_ACK → CLOSED. Server enters TIME_WAIT, not us → zero DMA
                             // cost on P4 side per art download.
                             artLogMem("post-close");
+
+                            // ── Dechunk if needed ─────────────────────────────
+                            // Sonos getaa at :1400 returns chunked encoding for
+                            // x-sonos-http sources even when HTTP/1.0 was requested.
+                            read = (int)dechunkBuffer(jpgBuf, (size_t)read);
 
                             // ── Format detection ──────────────────────────────
                             bool isJPEG = (read >= 3 && jpgBuf[0] == 0xFF

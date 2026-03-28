@@ -469,6 +469,14 @@ static void mainAppTask(void* param) {
             // which asserts esp_task_stack_is_sane_cache_disabled() → cache_utils.c:127.
             // mainAppTask has an internal SRAM stack so both are safe here.
             if (art_dma_recovery_requested) {
+                // Set flag BEFORE disconnect: pollingTask must not fire any SOAPs during the
+                // entire recovery window (disconnect + reconnect + stabilise = ~47s).
+                // Without this, pollingTask fires ~11 SOAPs during the 30s reconnect wait,
+                // creating ~44KB of TIME_WAIT PCBs.  Those PCBs survive WiFi stop (lwIP runs
+                // independently) and are still live when WiFi reconnects, so DMA only recovers
+                // to ~68KB — still below the 70KB threshold.  With the flag set here, no new
+                // PCBs form; existing ones expire during the ~47s window → DMA reaches ~112KB.
+                art_download_in_progress = true;
                 Serial.println("[MAIN] DMA recovery: stopping WiFi to release dynamic RX pool");
                 WiFi.disconnect(true);   // esp_wifi_stop() releases ~51KB WiFi dynamic RX buffers
                 esp_task_wdt_reset();
@@ -510,18 +518,10 @@ static void mainAppTask(void* param) {
                     if (WiFi.status() == WL_CONNECTED) {
                         Serial.printf("[MAIN] WiFi reconnected — DMA=%uKB, stabilising...\n",
                                       (unsigned)(heap_caps_get_free_size(MALLOC_CAP_DMA) / 1024));
-                        // Suppress polling during the stabilisation window.
-                        // Without this: pollingTask resumes SOAPs immediately after reconnect,
-                        // each SOAP creates a TIME_WAIT PCB (~4KB DMA, 12s expiry). Four SOAPs
-                        // consume 16KB → DMA drops from 74KB back below 70KB threshold →
-                        // art task triggers abort #4 → cascade. With flag set, pollingTask hits
-                        // the early-exit guard and sleeps each cycle → no new PCBs → DMA climbs
-                        // as pre-existing PCBs expire (TCP_MSL*2 = 12s).
-                        art_download_in_progress = true;
-
-                        // Wait for DMA to stabilise above ART_MIN_DMA_PRE_BURST + headroom.
-                        // TCP_MSL*2 (12s) → after ~15s all burst PCBs have expired.
-                        // Early-exit if DMA > threshold + 10KB (80KB) — enough headroom.
+                        // Wait for DMA to stabilise: with no new PCBs forming (flag set early),
+                        // existing TIME_WAIT PCBs (TCP_MSL*2=12s) expire during this window.
+                        // Expected DMA after PCB expiry: ~112KB (117KB WiFi-off - 49KB RX pool
+                        // + 44KB recovered PCBs). Early-exit once above comfort threshold.
                         {
                             unsigned long t_stab = millis();
                             const size_t kComfortDMA = ART_MIN_DMA_PRE_BURST + 10000;  // 80KB

@@ -20,7 +20,7 @@
 #define DEFAULT_WIFI_PASSWORD ""
 
 // Firmware version
-#define FIRMWARE_VERSION "1.7.2"
+#define FIRMWARE_VERSION "1.7.3"
 #define GITHUB_REPO "OpenSurface/SonosESP"
 #define GITHUB_API_URL "https://api.github.com/repos/" GITHUB_REPO "/releases/latest"
 
@@ -107,6 +107,7 @@ extern volatile bool blur_bg_ready;
 extern lv_obj_t*    img_blur_bg;
 extern lv_obj_t*    lbl_linein_icon;
 extern lv_obj_t*    lbl_linein_subtitle;
+extern lv_color_t   g_ambient_bright;  // Current 3× brightened dominant color for playback buttons
 extern bool is_sonos_radio_art;
 extern bool pending_is_station_logo;
 

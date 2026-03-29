@@ -183,7 +183,7 @@ void createMainScreen() {
     lv_obj_add_event_cb(btn_queue, ev_queue, LV_EVENT_CLICKED, NULL);  // Go to Queue/Playlist
     lv_obj_t* ico_fav = lv_label_create(btn_queue);
     lv_label_set_text(ico_fav, MDI_PLAYLIST);
-    lv_obj_set_style_text_font(ico_fav, &lv_font_mdi_24, 0);
+    lv_obj_set_style_text_font(ico_fav, &lv_font_mdi_32, 0);
     lv_obj_set_style_text_color(ico_fav, COL_TEXT, 0);
     lv_obj_center(ico_fav);
 
@@ -228,12 +228,12 @@ void createMainScreen() {
     int ctrl_y = 285;
     int center_x = 175;
 
-    // PLAY button (center) - big white circle with scale effect
+    // PLAY button (center) - ambient-coloured circle with scale effect
     btn_play = lv_btn_create(panel_right);
-    lv_obj_set_size(btn_play, 90, 90);
-    lv_obj_set_pos(btn_play, center_x - 45, ctrl_y - 45);
+    lv_obj_set_size(btn_play, 80, 80);
+    lv_obj_set_pos(btn_play, center_x - 40, ctrl_y - 40);
     lv_obj_set_style_bg_color(btn_play, COL_TEXT, 0);
-    lv_obj_set_style_radius(btn_play, 45, 0);
+    lv_obj_set_style_radius(btn_play, 40, 0);
     lv_obj_set_style_shadow_width(btn_play, 0, 0);
     lv_obj_set_style_transform_scale_x(btn_play, 280, LV_STATE_PRESSED);  // Scale to 110%
     lv_obj_set_style_transform_scale_y(btn_play, 280, LV_STATE_PRESSED);

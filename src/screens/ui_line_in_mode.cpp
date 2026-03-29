@@ -25,6 +25,7 @@ void setLineInMode(bool enable) {
         Serial.println("[LINEIN UI] Switching to line-in mode");
 
         // ── Left panel: swap album art for waveform icon ─────────────────────
+        if (img_blur_bg)     lv_obj_add_flag(img_blur_bg,     LV_OBJ_FLAG_HIDDEN);
         if (img_album)       lv_obj_add_flag(img_album,       LV_OBJ_FLAG_HIDDEN);
         if (art_placeholder) lv_obj_add_flag(art_placeholder, LV_OBJ_FLAG_HIDDEN);
 
@@ -85,6 +86,7 @@ void setLineInMode(bool enable) {
 
         if (img_album)       lv_obj_clear_flag(img_album,       LV_OBJ_FLAG_HIDDEN);
         if (art_placeholder) lv_obj_clear_flag(art_placeholder, LV_OBJ_FLAG_HIDDEN);
+        if (img_blur_bg)     lv_obj_clear_flag(img_blur_bg,     LV_OBJ_FLAG_HIDDEN);
 
         // ── Restore right panel ──────────────────────────────────────────────
         if (btn_prev)     lv_obj_clear_flag(btn_prev,     LV_OBJ_FLAG_HIDDEN);

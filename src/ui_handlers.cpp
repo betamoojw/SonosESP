@@ -317,6 +317,7 @@ void ev_wifi_scan(lv_event_t* e) {
 
         lv_obj_t* icon = lv_label_create(btn);
         lv_label_set_text(icon, MDI_WIFI);
+        lv_obj_set_style_text_font(icon, &lv_font_mdi_16, 0);
         lv_obj_set_style_text_color(icon, icon_color, 0);
         lv_obj_align(icon, LV_ALIGN_LEFT_MID, 10, 0);
 
@@ -1524,7 +1525,7 @@ static void displayCompletedArt() {
 static void updateNextTrackUI(SonosDevice* d) {
     static String last_next_title = "";
 
-    if (!d->isRadioStation && d->queueSize > 0 && d->currentTrackNumber > 0) {
+    if (!d->isRadioStation && !d->isLineIn && d->queueSize > 0 && d->currentTrackNumber > 0) {
         int nextIdx = -1;
 
         // Find next track after current

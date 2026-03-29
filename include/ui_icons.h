@@ -37,7 +37,7 @@
 #define MDI_ARROW_LEFT         "\xF3\xB0\x81\x8D"   // U+F004D  mdi-arrow-left
 #define MDI_BROADCAST          "\xF3\xB1\x9C\xA0"   // U+F1720  mdi-broadcast
 #define MDI_RADIO              "\xF3\xB0\x90\xB9"   // U+F0439  mdi-radio
-#define MDI_WAVEFORM           "\xF3\xB1\xAA\xBC"   // U+F1ABC  mdi-waveform  (line-in hero)
+#define MDI_WAVEFORM           "\xF3\xB1\xA1\xAC"   // U+F186C  mdi-audio-input-stereo-minijack  (line-in hero)
 
 // ── Settings / navigation (lv_font_mdi_24, includes Montserrat ASCII) ───────
 #define MDI_SPEAKER            "\xF3\xB0\x93\x83"   // U+F04C3  mdi-speaker

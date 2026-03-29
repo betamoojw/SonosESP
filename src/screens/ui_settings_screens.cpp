@@ -58,8 +58,8 @@ void refreshQueueList() {
         // Play icon for currently playing track OR track number
         lv_obj_t* num = lv_label_create(btn);
         if (isPlaying) {
-            lv_label_set_text(num, LV_SYMBOL_PLAY);
-            lv_obj_set_style_text_font(num, &lv_font_montserrat_18, 0);
+            lv_label_set_text(num, MDI_PLAY);
+            lv_obj_set_style_text_font(num, &lv_font_mdi_16, 0);
         } else {
             lv_label_set_text_fmt(num, "%d", trackNum);
             lv_obj_set_style_text_font(num, &lv_font_montserrat_14, 0);
@@ -130,9 +130,9 @@ void createQueueScreen() {
         queue_fetch_requested   = true;
     }, LV_EVENT_CLICKED, NULL);
     lv_obj_t* ico_refresh = lv_label_create(btn_refresh);
-    lv_label_set_text(ico_refresh, LV_SYMBOL_REFRESH);
+    lv_label_set_text(ico_refresh, MDI_REFRESH);
     lv_obj_set_style_text_color(ico_refresh, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(ico_refresh, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_font(ico_refresh, &lv_font_mdi_24, 0);
     lv_obj_center(ico_refresh);
 
     // Close button in header
@@ -144,9 +144,9 @@ void createQueueScreen() {
     lv_obj_set_style_shadow_width(btn_close, 0, 0);
     lv_obj_add_event_cb(btn_close, ev_back_main, LV_EVENT_CLICKED, NULL);
     lv_obj_t* ico_close = lv_label_create(btn_close);
-    lv_label_set_text(ico_close, LV_SYMBOL_CLOSE);
+    lv_label_set_text(ico_close, MDI_CLOSE);
     lv_obj_set_style_text_color(ico_close, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(ico_close, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_font(ico_close, &lv_font_mdi_24, 0);
     lv_obj_center(ico_close);
 
     // Status label below header
@@ -223,7 +223,7 @@ void createSourcesScreen() {
     };
 
     MusicSource sources[] = {
-        {"Sonos Playlists", LV_SYMBOL_LIST, "SQ:"}
+        {"Sonos Playlists", MDI_PLAYLIST, "SQ:"}
     };
 
     for (int i = 0; i < 1; i++) {
@@ -239,7 +239,7 @@ void createSourcesScreen() {
         lv_obj_t* icon = lv_label_create(btn);
         lv_label_set_text(icon, sources[i].icon);
         lv_obj_set_style_text_color(icon, COL_ACCENT, 0);
-        lv_obj_set_style_text_font(icon, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_font(icon, &lv_font_mdi_24, 0);
         lv_obj_align(icon, LV_ALIGN_LEFT_MID, 5, 0);
 
         lv_obj_t* name = lv_label_create(btn);
@@ -391,9 +391,9 @@ void createBrowseScreen() {
         lv_obj_set_user_data(btn, data);
 
         lv_obj_t* icon = lv_label_create(btn);
-        lv_label_set_text(icon, isContainer ? LV_SYMBOL_DIRECTORY : LV_SYMBOL_AUDIO);
+        lv_label_set_text(icon, isContainer ? MDI_FOLDER : MDI_SPEAKER);
         lv_obj_set_style_text_color(icon, COL_ACCENT, 0);
-        lv_obj_set_style_text_font(icon, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_font(icon, &lv_font_mdi_16, 0);
         lv_obj_align(icon, LV_ALIGN_LEFT_MID, 5, 0);
 
         lv_obj_t* lbl = lv_label_create(btn);

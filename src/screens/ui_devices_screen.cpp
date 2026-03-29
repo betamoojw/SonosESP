@@ -59,12 +59,12 @@ void refreshDeviceList() {
         // Speaker icon - show double icon for groups
         lv_obj_t* icon = lv_label_create(btn);
         if (hasGroup) {
-            lv_label_set_text(icon, LV_SYMBOL_AUDIO LV_SYMBOL_AUDIO);
+            lv_label_set_text(icon, MDI_SPEAKER_MULTIPLE);
         } else {
-            lv_label_set_text(icon, LV_SYMBOL_AUDIO);
+            lv_label_set_text(icon, MDI_SPEAKER);
         }
         lv_obj_set_style_text_color(icon, isPlaying ? COL_ACCENT : (isSelected ? COL_ACCENT : COL_TEXT2), 0);
-        lv_obj_set_style_text_font(icon, &lv_font_montserrat_18, 0);
+        lv_obj_set_style_text_font(icon, &lv_font_mdi_24, 0);
         lv_obj_align(icon, LV_ALIGN_LEFT_MID, 5, hasGroup || isPlaying ? -8 : 0);
 
         // Room name
@@ -78,22 +78,22 @@ void refreshDeviceList() {
         if (hasGroup || isPlaying) {
             lv_obj_t* sub = lv_label_create(btn);
             if (hasGroup && isPlaying) {
-                lv_label_set_text_fmt(sub, LV_SYMBOL_PLAY " Playing  " LV_SYMBOL_AUDIO " +%d speakers", memberCount - 1);
+                lv_label_set_text_fmt(sub, MDI_PLAY " Playing  " MDI_SPEAKER " +%d speakers", memberCount - 1);
             } else if (hasGroup) {
-                lv_label_set_text_fmt(sub, LV_SYMBOL_AUDIO " +%d speaker%s", memberCount - 1, memberCount > 2 ? "s" : "");
+                lv_label_set_text_fmt(sub, MDI_SPEAKER " +%d speaker%s", memberCount - 1, memberCount > 2 ? "s" : "");
             } else {
-                lv_label_set_text(sub, LV_SYMBOL_PLAY " Playing");
+                lv_label_set_text(sub, MDI_PLAY " Playing");
             }
             lv_obj_set_style_text_color(sub, isPlaying ? lv_color_hex(0x4ECB71) : COL_TEXT2, 0);
-            lv_obj_set_style_text_font(sub, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_font(sub, &lv_font_mdi_16, 0);
             lv_obj_align(sub, LV_ALIGN_LEFT_MID, hasGroup ? 55 : 45, 12);
         }
 
         // Right arrow indicator
         lv_obj_t* arrow = lv_label_create(btn);
-        lv_label_set_text(arrow, LV_SYMBOL_RIGHT);
+        lv_label_set_text(arrow, MDI_CHEVRON_RIGHT);
         lv_obj_set_style_text_color(arrow, COL_TEXT2, 0);
-        lv_obj_set_style_text_font(arrow, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_font(arrow, &lv_font_mdi_24, 0);
         lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -5, 0);
 
         lv_obj_add_event_cb(btn, [](lv_event_t* e) {
@@ -122,9 +122,9 @@ void refreshDeviceList() {
 
                 // Linking icon
                 lv_obj_t* memIcon = lv_label_create(memBtn);
-                lv_label_set_text(memIcon, LV_SYMBOL_RIGHT " " LV_SYMBOL_AUDIO);
+                lv_label_set_text(memIcon, MDI_CHEVRON_RIGHT " " MDI_SPEAKER);
                 lv_obj_set_style_text_color(memIcon, COL_TEXT2, 0);
-                lv_obj_set_style_text_font(memIcon, &lv_font_montserrat_14, 0);
+                lv_obj_set_style_text_font(memIcon, &lv_font_mdi_16, 0);
                 lv_obj_align(memIcon, LV_ALIGN_LEFT_MID, 5, 0);
 
                 lv_obj_t* memLbl = lv_label_create(memBtn);
@@ -179,9 +179,9 @@ void refreshDeviceList() {
             lv_obj_set_style_bg_color(btn, isSelected ? COL_SELECTED : COL_CARD, 0);
 
             lv_obj_t* icon = lv_label_create(btn);
-            lv_label_set_text(icon, LV_SYMBOL_AUDIO);
+            lv_label_set_text(icon, MDI_SPEAKER);
             lv_obj_set_style_text_color(icon, COL_TEXT2, 0);
-            lv_obj_set_style_text_font(icon, &lv_font_montserrat_20, 0);
+            lv_obj_set_style_text_font(icon, &lv_font_mdi_24, 0);
             lv_obj_align(icon, LV_ALIGN_LEFT_MID, 5, 0);
 
             lv_obj_t* lbl = lv_label_create(btn);
@@ -231,9 +231,9 @@ void createDevicesScreen() {
     lv_obj_set_style_shadow_width(btn_sonos_scan, 0, 0);
     lv_obj_add_event_cb(btn_sonos_scan, ev_discover, LV_EVENT_CLICKED, NULL);
     lv_obj_t* lbl_scan = lv_label_create(btn_sonos_scan);
-    lv_label_set_text(lbl_scan, LV_SYMBOL_REFRESH " Scan");
+    lv_label_set_text(lbl_scan, MDI_REFRESH " Scan");
     lv_obj_set_style_text_color(lbl_scan, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_text_font(lbl_scan, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(lbl_scan, &lv_font_mdi_16, 0);
     lv_obj_center(lbl_scan);
 
     // Status label
@@ -241,7 +241,7 @@ void createDevicesScreen() {
     lv_obj_set_pos(lbl_status, 0, 50);
     lv_label_set_text(lbl_status, "Tap Scan to find speakers");
     lv_obj_set_style_text_color(lbl_status, COL_TEXT2, 0);
-    lv_obj_set_style_text_font(lbl_status, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(lbl_status, &lv_font_mdi_16, 0);
 
     // Devices list
     list_devices = lv_list_create(content);

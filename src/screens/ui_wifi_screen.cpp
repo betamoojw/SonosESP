@@ -53,9 +53,9 @@ void createWiFiScreen() {
     lv_obj_set_style_shadow_width(btn_wifi_scan, 0, 0);
     lv_obj_add_event_cb(btn_wifi_scan, ev_wifi_scan, LV_EVENT_CLICKED, NULL);
     lbl_scan_text = lv_label_create(btn_wifi_scan);
-    lv_label_set_text(lbl_scan_text, LV_SYMBOL_REFRESH " Scan");
+    lv_label_set_text(lbl_scan_text, MDI_REFRESH " Scan");
     lv_obj_set_style_text_color(lbl_scan_text, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_text_font(lbl_scan_text, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_scan_text, &lv_font_mdi_16, 0);
     lv_obj_center(lbl_scan_text);
 
     // ── Status label (y=50) ────────────────────────────────────────────────────
@@ -63,7 +63,7 @@ void createWiFiScreen() {
     lv_obj_set_pos(lbl_wifi_status, 0, 50);
     lv_label_set_text(lbl_wifi_status, "Tap Scan to find networks");
     lv_obj_set_style_text_color(lbl_wifi_status, COL_TEXT2, 0);
-    lv_obj_set_style_text_font(lbl_wifi_status, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(lbl_wifi_status, &lv_font_mdi_16, 0);
     lv_obj_set_width(lbl_wifi_status, lv_pct(100));
     lv_label_set_long_mode(lbl_wifi_status, LV_LABEL_LONG_DOT);
 
@@ -93,9 +93,9 @@ void createWiFiScreen() {
         lv_textarea_set_text(ta_password, "");
     }, LV_EVENT_CLICKED, NULL);
     lv_obj_t* lbl_x = lv_label_create(btn_cancel);
-    lv_label_set_text(lbl_x, LV_SYMBOL_CLOSE);
+    lv_label_set_text(lbl_x, MDI_CLOSE);
     lv_obj_set_style_text_color(lbl_x, COL_TEXT2, 0);
-    lv_obj_set_style_text_font(lbl_x, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_x, &lv_font_mdi_16, 0);
     lv_obj_center(lbl_x);
 
     // SSID name
@@ -131,9 +131,9 @@ void createWiFiScreen() {
     lv_obj_set_style_shadow_width(btn_wifi_connect, 0, 0);
     lv_obj_add_event_cb(btn_wifi_connect, ev_wifi_connect, LV_EVENT_CLICKED, NULL);
     lv_obj_t* cl = lv_label_create(btn_wifi_connect);
-    lv_label_set_text(cl, LV_SYMBOL_OK " Connect");
+    lv_label_set_text(cl, MDI_CHECK " Connect");
     lv_obj_set_style_text_color(cl, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_text_font(cl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(cl, &lv_font_mdi_16, 0);
     lv_obj_center(cl);
 
     // ── Network list (y=140, h=340) — always BELOW strip, never overlaps ───────
@@ -182,7 +182,7 @@ void createWiFiScreen() {
         if (lv_event_get_code(e) != LV_EVENT_SCREEN_LOADED) return;
         if (WiFi.status() == WL_CONNECTED) {
             lv_label_set_text_fmt(lbl_wifi_status,
-                LV_SYMBOL_WIFI " Connected to %s  (%s)",
+                MDI_WIFI " Connected to %s  (%s)",
                 WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
             lv_obj_set_style_text_color(lbl_wifi_status, lv_color_hex(0x4ECB71), 0);
         } else {

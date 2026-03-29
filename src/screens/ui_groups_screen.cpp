@@ -74,12 +74,12 @@ void refreshGroupsList() {
         // Group icon with playing indicator
         lv_obj_t* icon = lv_label_create(btn);
         if (isPlaying) {
-            lv_label_set_text(icon, memberCount > 1 ? LV_SYMBOL_PLAY " " LV_SYMBOL_AUDIO LV_SYMBOL_AUDIO : LV_SYMBOL_PLAY " " LV_SYMBOL_AUDIO);
+            lv_label_set_text(icon, memberCount > 1 ? MDI_PLAY " " MDI_SPEAKER_MULTIPLE : MDI_PLAY " " MDI_SPEAKER);
         } else {
-            lv_label_set_text(icon, memberCount > 1 ? LV_SYMBOL_AUDIO LV_SYMBOL_AUDIO : LV_SYMBOL_AUDIO);
+            lv_label_set_text(icon, memberCount > 1 ? MDI_SPEAKER_MULTIPLE : MDI_SPEAKER);
         }
         lv_obj_set_style_text_color(icon, isPlaying ? lv_color_hex(0x4ECB71) : (memberCount > 1 ? COL_ACCENT : COL_TEXT2), 0);
-        lv_obj_set_style_text_font(icon, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_font(icon, &lv_font_mdi_24, 0);
         lv_obj_align(icon, LV_ALIGN_LEFT_MID, 5, (isPlaying && hasTrack) ? -18 : -8);
 
         // Room name (coordinator)
@@ -143,9 +143,9 @@ void refreshGroupsList() {
                 lv_obj_set_style_margin_left(memBtn, 40, 0);
 
                 lv_obj_t* memIcon = lv_label_create(memBtn);
-                lv_label_set_text(memIcon, LV_SYMBOL_RIGHT " " LV_SYMBOL_AUDIO);
+                lv_label_set_text(memIcon, MDI_CHEVRON_RIGHT " " MDI_SPEAKER);
                 lv_obj_set_style_text_color(memIcon, COL_TEXT2, 0);
-                lv_obj_set_style_text_font(memIcon, &lv_font_montserrat_16, 0);
+                lv_obj_set_style_text_font(memIcon, &lv_font_mdi_16, 0);
                 lv_obj_align(memIcon, LV_ALIGN_LEFT_MID, 5, 0);
 
                 lv_obj_t* memLbl = lv_label_create(memBtn);
@@ -222,9 +222,9 @@ void refreshGroupsList() {
                 lv_obj_set_style_bg_color(addBtn, lv_color_hex(0x2A5A2A), LV_STATE_PRESSED);
 
                 lv_obj_t* addIcon = lv_label_create(addBtn);
-                lv_label_set_text(addIcon, LV_SYMBOL_PLUS " " LV_SYMBOL_AUDIO);
+                lv_label_set_text(addIcon, MDI_PLUS " " MDI_SPEAKER);
                 lv_obj_set_style_text_color(addIcon, lv_color_hex(0x4ECB71), 0);
-                lv_obj_set_style_text_font(addIcon, &lv_font_montserrat_18, 0);
+                lv_obj_set_style_text_font(addIcon, &lv_font_mdi_24, 0);
                 lv_obj_align(addIcon, LV_ALIGN_LEFT_MID, 5, 0);
 
                 lv_obj_t* addLbl = lv_label_create(addBtn);
@@ -291,13 +291,13 @@ void createGroupsScreen() {
 
         // If no speakers discovered yet, run speaker discovery first
         if (sonos.getDeviceCount() == 0) {
-            lv_label_set_text(lbl_groups_status, LV_SYMBOL_REFRESH " Discovering speakers...");
+            lv_label_set_text(lbl_groups_status, MDI_REFRESH " Discovering speakers...");
             lv_refr_now(NULL);  // Force immediate refresh to show spinner
             sonos.discoverDevices();
         }
 
         // Now update group info
-        lv_label_set_text(lbl_groups_status, LV_SYMBOL_REFRESH " Updating groups...");
+        lv_label_set_text(lbl_groups_status, MDI_REFRESH " Updating groups...");
         lv_refr_now(NULL);  // Force immediate refresh
 
         // Update group info with UI updates
@@ -318,9 +318,9 @@ void createGroupsScreen() {
         lv_obj_set_style_bg_color(btn_groups_scan, COL_ACCENT, 0);
     }, LV_EVENT_CLICKED, NULL);
     lv_obj_t* lbl_scan = lv_label_create(btn_groups_scan);
-    lv_label_set_text(lbl_scan, LV_SYMBOL_REFRESH " Scan");
+    lv_label_set_text(lbl_scan, MDI_REFRESH " Scan");
     lv_obj_set_style_text_color(lbl_scan, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_text_font(lbl_scan, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(lbl_scan, &lv_font_mdi_16, 0);
     lv_obj_center(lbl_scan);
 
     // Status label
@@ -328,7 +328,7 @@ void createGroupsScreen() {
     lv_obj_set_pos(lbl_groups_status, 0, 50);
     lv_label_set_text(lbl_groups_status, "Tap a group to manage it");
     lv_obj_set_style_text_color(lbl_groups_status, COL_TEXT2, 0);
-    lv_obj_set_style_text_font(lbl_groups_status, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(lbl_groups_status, &lv_font_mdi_16, 0);
 
     // Groups list
     list_groups = lv_obj_create(content);

@@ -109,7 +109,7 @@ void createOTAScreen() {
     lv_obj_set_pos(lbl_ota_status, 0, 230);
     lv_label_set_text(lbl_ota_status, "Tap 'Check for Updates' to begin");
     lv_obj_set_style_text_color(lbl_ota_status, COL_TEXT2, 0);
-    lv_obj_set_style_text_font(lbl_ota_status, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_ota_status, &lv_font_mdi_16, 0);
     lv_obj_set_width(lbl_ota_status, lv_pct(100));
     lv_label_set_long_mode(lbl_ota_status, LV_LABEL_LONG_WRAP);
 
@@ -142,9 +142,9 @@ void createOTAScreen() {
     lv_obj_set_style_radius(btn_check_update, 12, 0);
     lv_obj_add_event_cb(btn_check_update, ev_check_update, LV_EVENT_CLICKED, NULL);
     lv_obj_t* lbl_check = lv_label_create(btn_check_update);
-    lv_label_set_text(lbl_check, LV_SYMBOL_REFRESH " Check for Updates");
+    lv_label_set_text(lbl_check, MDI_REFRESH " Check for Updates");
     lv_obj_set_style_text_color(lbl_check, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_text_font(lbl_check, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(lbl_check, &lv_font_mdi_16, 0);
     lv_obj_center(lbl_check);
 
     // Install Update button (hidden by default)
@@ -155,19 +155,19 @@ void createOTAScreen() {
     lv_obj_set_style_radius(btn_install_update, 12, 0);
     lv_obj_add_event_cb(btn_install_update, ev_install_update, LV_EVENT_CLICKED, NULL);
     lv_obj_t* lbl_install = lv_label_create(btn_install_update);
-    lv_label_set_text(lbl_install, LV_SYMBOL_DOWNLOAD " Install Update");
+    lv_label_set_text(lbl_install, MDI_DOWNLOAD " Install Update");
     lv_obj_set_style_text_color(lbl_install, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_text_font(lbl_install, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(lbl_install, &lv_font_mdi_16, 0);
     lv_obj_center(lbl_install);
     lv_obj_add_flag(btn_install_update, LV_OBJ_FLAG_HIDDEN);  // Hidden until update available
 
     // Info text
     lv_obj_t* lbl_info = lv_label_create(content);
     lv_label_set_text(lbl_info,
-        LV_SYMBOL_WARNING "  Do not disconnect power during update!\n"
+        MDI_ALERT "  Do not disconnect power during update!\n"
         "Stable: Auto-releases | Nightly: Latest test builds (may be unstable)");
     lv_obj_set_style_text_color(lbl_info, COL_TEXT2, 0);
-    lv_obj_set_style_text_font(lbl_info, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(lbl_info, &lv_font_mdi_16, 0);
     lv_obj_set_width(lbl_info, lv_pct(100));
     lv_label_set_long_mode(lbl_info, LV_LABEL_LONG_WRAP);
     lv_obj_set_pos(lbl_info, 0, 400);

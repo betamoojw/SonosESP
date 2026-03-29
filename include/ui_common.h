@@ -9,6 +9,7 @@
 #include <Update.h>
 #include <ArduinoJson.h>
 #include "lvgl.h"
+#include "ui_icons.h"
 #include "display_driver.h"
 #include "touch_driver.h"
 #include "sonos_controller.h"
@@ -19,7 +20,7 @@
 #define DEFAULT_WIFI_PASSWORD ""
 
 // Firmware version
-#define FIRMWARE_VERSION "1.7.1"
+#define FIRMWARE_VERSION "1.7.2"
 #define GITHUB_REPO "OpenSurface/SonosESP"
 #define GITHUB_API_URL "https://api.github.com/repos/" GITHUB_REPO "/releases/latest"
 
@@ -104,6 +105,8 @@ extern lv_img_dsc_t blur_bg_dsc;
 extern uint16_t*    blur_bg_buf;
 extern volatile bool blur_bg_ready;
 extern lv_obj_t*    img_blur_bg;
+extern lv_obj_t*    lbl_linein_icon;
+extern lv_obj_t*    lbl_linein_subtitle;
 extern bool is_sonos_radio_art;
 extern bool pending_is_station_logo;
 
@@ -262,5 +265,9 @@ void clockBgTask(void* param);
 // Radio mode UI adaptation
 void setRadioMode(bool enable);
 void updateRadioModeUI();
+
+// Line-in mode UI adaptation
+void setLineInMode(bool enable);
+void updateLineInUI();
 
 #endif // UI_COMMON_H

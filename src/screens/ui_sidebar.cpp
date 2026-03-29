@@ -46,13 +46,13 @@ lv_obj_t* createSettingsSidebar(lv_obj_t* screen, int activeIdx) {
     lv_obj_set_style_shadow_width(btn_close, 0, 0);
     lv_obj_add_event_cb(btn_close, ev_back_main, LV_EVENT_CLICKED, NULL);
     lv_obj_t* ico_x = lv_label_create(btn_close);
-    lv_label_set_text(ico_x, LV_SYMBOL_CLOSE);
+    lv_label_set_text(ico_x, MDI_CLOSE);
     lv_obj_set_style_text_color(ico_x, COL_TEXT, 0);
-    lv_obj_set_style_text_font(ico_x, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(ico_x, &lv_font_mdi_16, 0);
     lv_obj_center(ico_x);
 
     // Menu items (Order: General, Speakers, Groups, Sources, Display, WiFi, Clock, Update)
-    const char* icons[] = {LV_SYMBOL_SETTINGS, LV_SYMBOL_AUDIO, LV_SYMBOL_SHUFFLE, LV_SYMBOL_LIST, LV_SYMBOL_EYE_OPEN, LV_SYMBOL_WIFI, LV_SYMBOL_BELL, LV_SYMBOL_DOWNLOAD};
+    const char* icons[] = {MDI_COG, MDI_SPEAKER, MDI_SPEAKER_MULTIPLE, MDI_PLAYLIST, MDI_MONITOR, MDI_WIFI, MDI_CLOCK_OUTLINE, MDI_DOWNLOAD};
     const char* labels[] = {"General", "Speakers", "Groups", "Sources", "Display", "WiFi", "Clock", "Update"};
 
     int y = 55;
@@ -71,7 +71,7 @@ lv_obj_t* createSettingsSidebar(lv_obj_t* screen, int activeIdx) {
         lv_obj_t* ico = lv_label_create(btn);
         lv_label_set_text(ico, icons[i]);
         lv_obj_set_style_text_color(ico, active ? lv_color_hex(0x000000) : COL_TEXT2, 0);
-        lv_obj_set_style_text_font(ico, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_font(ico, &lv_font_mdi_24, 0);
         lv_obj_align(ico, LV_ALIGN_LEFT_MID, 0, 0);
 
         lv_obj_t* lbl = lv_label_create(btn);

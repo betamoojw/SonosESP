@@ -21,7 +21,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         submodules: recursive
 
@@ -53,7 +53,7 @@ jobs:
 
     - name: Cache PlatformIO
       if: steps.check_nightly.outputs.IS_NIGHTLY != 'true'
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: |
           ~/.platformio
@@ -87,7 +87,7 @@ jobs:
 
     - name: Upload firmware artifacts
       if: steps.check_nightly.outputs.IS_NIGHTLY != 'true'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: firmware-binaries
         path: |
@@ -98,7 +98,7 @@ jobs:
 
     - name: Upload web-installer artifacts
       if: steps.check_nightly.outputs.IS_NIGHTLY != 'true'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: web-installer
         path: web-installer/

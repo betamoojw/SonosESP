@@ -130,6 +130,10 @@ uint16_t*    blur_bg_buf   = nullptr;
 volatile bool blur_bg_ready = false;
 lv_obj_t*    img_blur_bg   = nullptr;
 
+// Line-in mode widgets (created hidden in createMainScreen, shown by setLineInMode)
+lv_obj_t*    lbl_linein_icon     = nullptr;  // 80px waveform icon, accent colour, pulsing
+lv_obj_t*    lbl_linein_subtitle = nullptr;  // "LIVE AUDIO" label below icon
+
 // ============================================================================
 // Network Tasks — FreeRTOS Handles and Shutdown Signals
 // ============================================================================

@@ -1152,8 +1152,9 @@ bool SonosController::updateTrackInfo() {
         dev->currentURI = trackURI;
         // aac:// is used by both live AAC radio streams AND Apple Music/streaming service
         // tracks played from a queue. Treat as radio only when the queue is empty.
-        dev->isRadioStation = isRadioURI(trackURI) ||
-                              (trackURI.startsWith("aac://") && dev->queueSize == 0);
+        dev->isLineIn       = trackURI.startsWith("x-rincon-stream:");
+        dev->isRadioStation = !dev->isLineIn && (isRadioURI(trackURI) ||
+                              (trackURI.startsWith("aac://") && dev->queueSize == 0));
 
         // Get metadata and decode HTML entities
         String meta = extractXML(resp, "TrackMetaData");

@@ -1,0 +1,46 @@
+name: Stale Issues
+
+on:
+  schedule:
+    - cron: '0 9 * * *'   # runs every day at 09:00 UTC
+  workflow_dispatch:        # allow manual trigger from Actions tab
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          # ── Timing ─────────────────────────────────────────────────────────
+          days-before-stale: 14       # mark stale after 14 days with no activity
+          days-before-close: 7        # close 7 days after being marked stale
+          days-before-pr-stale: -1    # -1 = never mark PRs stale
+          days-before-pr-close: -1    # -1 = never close PRs
+
+          # ── Labels ─────────────────────────────────────────────────────────
+          stale-issue-label: 'stale'
+          close-issue-label: 'wontfix'
+
+          # ── Messages ───────────────────────────────────────────────────────
+          stale-issue-message: >
+            This issue has been automatically marked as **stale** because it has
+            had no activity for 14 days. 👋
+
+
+            If this is still relevant, please leave a comment or provide more
+            details and it will stay open. Otherwise it will be closed in **7 days**.
+
+          close-issue-message: >
+            This issue has been automatically **closed** due to inactivity. 🔒
+
+
+            If you believe it is still valid, feel free to reopen it with additional
+            context or a steps-to-reproduce. Thank you for your contribution!
+
+          # ── Exemptions ─────────────────────────────────────────────────────
+          exempt-issue-labels: 'bug,enhancement,help wanted,pinned'
+          exempt-all-assignees: true   # never stale if someone is assigned

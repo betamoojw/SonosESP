@@ -201,18 +201,18 @@ void ev_discover(lv_event_t* e) {
     }
 
     if (cnt == 0) {
-        lv_label_set_text(lbl_status, LV_SYMBOL_WARNING " No Sonos devices found on network");
+        lv_label_set_text(lbl_status, MDI_ALERT " No Sonos devices found on network");
         lv_obj_set_style_text_color(lbl_status, lv_color_hex(0xFF6B6B), 0);
         return;
     }
 
     if (cnt < 0) {
-        lv_label_set_text(lbl_status, LV_SYMBOL_WARNING " Discovery failed - check network");
+        lv_label_set_text(lbl_status, MDI_ALERT " Discovery failed - check network");
         lv_obj_set_style_text_color(lbl_status, lv_color_hex(0xFF6B6B), 0);
         return;
     }
 
-    lv_label_set_text_fmt(lbl_status, LV_SYMBOL_OK " Found %d Sonos device%s", cnt, cnt == 1 ? "" : "s");
+    lv_label_set_text_fmt(lbl_status, MDI_CHECK " Found %d Sonos device%s", cnt, cnt == 1 ? "" : "s");
     lv_obj_set_style_text_color(lbl_status, lv_color_hex(0x4ECB71), 0);
     refreshDeviceList();
 }
@@ -227,7 +227,7 @@ void ev_wifi_scan(lv_event_t* e) {
         lv_obj_set_style_bg_color(btn_wifi_scan, lv_color_hex(0x555555), LV_STATE_DISABLED);
     }
     if (lbl_scan_text) {
-        lv_label_set_text(lbl_scan_text, LV_SYMBOL_REFRESH "  Scanning...");
+        lv_label_set_text(lbl_scan_text, MDI_REFRESH "  Scanning...");
     }
 
     lv_label_set_text(lbl_wifi_status, "Scanning for networks...");
@@ -252,21 +252,21 @@ void ev_wifi_scan(lv_event_t* e) {
     // Hide spinner, re-enable button
     if (spinner_wifi_scan) lv_obj_add_flag(spinner_wifi_scan, LV_OBJ_FLAG_HIDDEN);
     if (btn_wifi_scan)     lv_obj_clear_state(btn_wifi_scan, LV_STATE_DISABLED);
-    if (lbl_scan_text)     lv_label_set_text(lbl_scan_text, LV_SYMBOL_REFRESH " Scan");
+    if (lbl_scan_text)     lv_label_set_text(lbl_scan_text, MDI_REFRESH " Scan");
 
     if (n == 0) {
-        lv_label_set_text(lbl_wifi_status, LV_SYMBOL_WARNING " No networks found");
+        lv_label_set_text(lbl_wifi_status, MDI_ALERT " No networks found");
         lv_obj_set_style_text_color(lbl_wifi_status, lv_color_hex(0xFF6B6B), 0);
         return;
     }
 
     if (n < 0) {
-        lv_label_set_text(lbl_wifi_status, LV_SYMBOL_WARNING " Scan failed - try again");
+        lv_label_set_text(lbl_wifi_status, MDI_ALERT " Scan failed - try again");
         lv_obj_set_style_text_color(lbl_wifi_status, lv_color_hex(0xFF6B6B), 0);
         return;
     }
 
-    lv_label_set_text_fmt(lbl_wifi_status, LV_SYMBOL_OK " Found %d network%s", n, n == 1 ? "" : "s");
+    lv_label_set_text_fmt(lbl_wifi_status, MDI_CHECK " Found %d network%s", n, n == 1 ? "" : "s");
     lv_obj_set_style_text_color(lbl_wifi_status, lv_color_hex(0x4ECB71), 0);
 
     // Deduplicate: for mesh networks (same SSID, multiple APs) keep best RSSI only
@@ -310,13 +310,13 @@ void ev_wifi_scan(lv_event_t* e) {
             // Show password strip + update SSID label
             lv_label_set_text(lbl_pw_ssid, selectedSSID.c_str());
             lv_obj_clear_flag(pw_strip, LV_OBJ_FLAG_HIDDEN);
-            lv_label_set_text_fmt(lbl_wifi_status, LV_SYMBOL_WIFI " %s", selectedSSID.c_str());
+            lv_label_set_text_fmt(lbl_wifi_status, MDI_WIFI " %s", selectedSSID.c_str());
             lv_obj_set_style_text_color(lbl_wifi_status, COL_TEXT, 0);
             lv_obj_clear_flag(kb, LV_OBJ_FLAG_HIDDEN);
         }, LV_EVENT_CLICKED, NULL);
 
         lv_obj_t* icon = lv_label_create(btn);
-        lv_label_set_text(icon, LV_SYMBOL_WIFI);
+        lv_label_set_text(icon, MDI_WIFI);
         lv_obj_set_style_text_color(icon, icon_color, 0);
         lv_obj_align(icon, LV_ALIGN_LEFT_MID, 10, 0);
 
@@ -333,7 +333,7 @@ void ev_wifi_scan(lv_event_t* e) {
 
 void ev_wifi_connect(lv_event_t* e) {
     if (selectedSSID.length() == 0) {
-        lv_label_set_text(lbl_wifi_status, LV_SYMBOL_WARNING " Please select a network first");
+        lv_label_set_text(lbl_wifi_status, MDI_ALERT " Please select a network first");
         lv_obj_set_style_text_color(lbl_wifi_status, lv_color_hex(0xFF6B6B), 0);
         return;
     }
@@ -345,7 +345,7 @@ void ev_wifi_connect(lv_event_t* e) {
         lv_obj_add_state(btn_wifi_connect, LV_STATE_DISABLED);
     }
 
-    lv_label_set_text_fmt(lbl_wifi_status, LV_SYMBOL_REFRESH " Connecting to %s...", selectedSSID.c_str());
+    lv_label_set_text_fmt(lbl_wifi_status, MDI_REFRESH " Connecting to %s...", selectedSSID.c_str());
     lv_obj_set_style_text_color(lbl_wifi_status, COL_ACCENT, 0);
     lv_obj_add_flag(kb, LV_OBJ_FLAG_HIDDEN);
     lv_timer_handler();  // Update UI
@@ -362,7 +362,7 @@ void ev_wifi_connect(lv_event_t* e) {
         esp_task_wdt_reset();  // Feed WDT — loop runs up to 30s, WDT timeout = 30s
         vTaskDelay(pdMS_TO_TICKS(500));
         lv_timer_handler();  // Keep UI responsive
-        lv_label_set_text_fmt(lbl_wifi_status, LV_SYMBOL_REFRESH " Connecting to %s%s",
+        lv_label_set_text_fmt(lbl_wifi_status, MDI_REFRESH " Connecting to %s%s",
             selectedSSID.c_str(),
             tries % 4 == 0 ? "..." : tries % 4 == 1 ? ".  " : tries % 4 == 2 ? ".. " : " ..");
     }
@@ -391,7 +391,7 @@ void ev_wifi_connect(lv_event_t* e) {
 
         String ip = WiFi.localIP().toString();
         lv_label_set_text_fmt(lbl_wifi_status,
-            LV_SYMBOL_WIFI " Connected to %s  (%s)",
+            MDI_WIFI " Connected to %s  (%s)",
             selectedSSID.c_str(), ip.c_str());
         lv_obj_set_style_text_color(lbl_wifi_status, lv_color_hex(0x4ECB71), 0);
 
@@ -414,7 +414,7 @@ void ev_wifi_connect(lv_event_t* e) {
             reason = "Connection timeout — check password and try again";
         }
 
-        lv_label_set_text_fmt(lbl_wifi_status, LV_SYMBOL_WARNING " Failed: %s", reason);
+        lv_label_set_text_fmt(lbl_wifi_status, MDI_ALERT " Failed: %s", reason);
         lv_obj_set_style_text_color(lbl_wifi_status, lv_color_hex(0xFF6B6B), 0);
     }
 }
@@ -425,7 +425,7 @@ void ev_wifi_connect(lv_event_t* e) {
 static void checkForUpdates() {
     if (WiFi.status() != WL_CONNECTED) {
         if (lbl_ota_status) {
-            lv_label_set_text(lbl_ota_status, LV_SYMBOL_WARNING " No WiFi connection");
+            lv_label_set_text(lbl_ota_status, MDI_ALERT " No WiFi connection");
             lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
         }
         return;
@@ -438,7 +438,7 @@ static void checkForUpdates() {
     if (last_check_time > 0 && (now - last_check_time) < OTA_CHECK_DEBOUNCE_MS) {
         unsigned long wait_sec = (OTA_CHECK_DEBOUNCE_MS - (now - last_check_time)) / 1000 + 1;
         if (lbl_ota_status) {
-            lv_label_set_text_fmt(lbl_ota_status, LV_SYMBOL_WARNING " Please wait %lu seconds", wait_sec);
+            lv_label_set_text_fmt(lbl_ota_status, MDI_ALERT " Please wait %lu seconds", wait_sec);
             lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFFA500), 0);
         }
         return;
@@ -449,7 +449,7 @@ static void checkForUpdates() {
     if (btn_check_update) lv_obj_add_state(btn_check_update, LV_STATE_DISABLED);
 
     if (lbl_ota_status) {
-        lv_label_set_text(lbl_ota_status, LV_SYMBOL_REFRESH " Checking for updates...");
+        lv_label_set_text(lbl_ota_status, MDI_REFRESH " Checking for updates...");
         lv_obj_set_style_text_color(lbl_ota_status, COL_ACCENT, 0);
     }
     lv_timer_handler();
@@ -476,7 +476,7 @@ static void checkForUpdates() {
     if (!xSemaphoreTake(network_mutex, pdMS_TO_TICKS(NETWORK_MUTEX_TIMEOUT_MS))) {
         Serial.println("[OTA] Failed to acquire network mutex - check aborted");
         if (lbl_ota_status) {
-            lv_label_set_text(lbl_ota_status, LV_SYMBOL_WARNING " Network busy, try again");
+            lv_label_set_text(lbl_ota_status, MDI_ALERT " Network busy, try again");
             lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
         }
         if (btn_check_update) lv_obj_clear_state(btn_check_update, LV_STATE_DISABLED);
@@ -569,7 +569,7 @@ static void checkForUpdates() {
                     if (!found) {
                         Serial.println("[OTA] No nightly releases found in recent releases");
                         if (lbl_ota_status) {
-                            lv_label_set_text(lbl_ota_status, LV_SYMBOL_WARNING " No nightly releases found");
+                            lv_label_set_text(lbl_ota_status, MDI_ALERT " No nightly releases found");
                             lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
                         }
                         if (lbl_latest_version) {
@@ -580,7 +580,7 @@ static void checkForUpdates() {
                 } else {
                     Serial.println("[OTA] Error: Expected array response for nightly channel");
                     if (lbl_ota_status) {
-                        lv_label_set_text(lbl_ota_status, LV_SYMBOL_WARNING " No nightly releases found");
+                        lv_label_set_text(lbl_ota_status, MDI_ALERT " No nightly releases found");
                         lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
                     }
                     return;
@@ -602,7 +602,7 @@ static void checkForUpdates() {
             if (ota_channel == 0 && latest_version.indexOf("-nightly") >= 0) {
                 Serial.printf("[OTA] Skipping nightly version in Stable channel: v%s\n", latest_version.c_str());
                 if (lbl_ota_status) {
-                    lv_label_set_text(lbl_ota_status, LV_SYMBOL_WARNING " No stable releases found");
+                    lv_label_set_text(lbl_ota_status, MDI_ALERT " No stable releases found");
                     lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
                 }
                 if (lbl_latest_version) {
@@ -621,7 +621,7 @@ static void checkForUpdates() {
                 if (current_version.indexOf("-nightly") >= 0) {
                     // User is on a nightly, and latest release is stable = user is on latest nightly
                     if (lbl_ota_status) {
-                        lv_label_set_text(lbl_ota_status, LV_SYMBOL_OK " You're on the latest nightly version!");
+                        lv_label_set_text(lbl_ota_status, MDI_CHECK " You're on the latest nightly version!");
                         lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0x4ECB71), 0);
                     }
                     if (lbl_latest_version) {
@@ -633,7 +633,7 @@ static void checkForUpdates() {
                 } else {
                     // User is on stable, no nightlies available
                     if (lbl_ota_status) {
-                        lv_label_set_text(lbl_ota_status, LV_SYMBOL_WARNING " No nightly releases found");
+                        lv_label_set_text(lbl_ota_status, MDI_ALERT " No nightly releases found");
                         lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
                     }
                     if (lbl_latest_version) {
@@ -668,7 +668,7 @@ static void checkForUpdates() {
             // Compare versions
             if (latest_version != FIRMWARE_VERSION) {
                 if (lbl_ota_status) {
-                    lv_label_set_text_fmt(lbl_ota_status, LV_SYMBOL_DOWNLOAD " Update available: v%s", latest_version.c_str());
+                    lv_label_set_text_fmt(lbl_ota_status, MDI_DOWNLOAD " Update available: v%s", latest_version.c_str());
                     lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0x4ECB71), 0);
                 }
                 if (btn_install_update) {
@@ -676,7 +676,7 @@ static void checkForUpdates() {
                 }
             } else {
                 if (lbl_ota_status) {
-                    lv_label_set_text(lbl_ota_status, LV_SYMBOL_OK " You're on the latest version!");
+                    lv_label_set_text(lbl_ota_status, MDI_CHECK " You're on the latest version!");
                     lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0x4ECB71), 0);
                 }
                 if (btn_install_update) {
@@ -685,13 +685,13 @@ static void checkForUpdates() {
             }
         } else {
             if (lbl_ota_status) {
-                lv_label_set_text(lbl_ota_status, LV_SYMBOL_WARNING " Failed to parse response");
+                lv_label_set_text(lbl_ota_status, MDI_ALERT " Failed to parse response");
                 lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
             }
         }
     } else {
         if (lbl_ota_status) {
-            lv_label_set_text_fmt(lbl_ota_status, LV_SYMBOL_WARNING " Check failed (HTTP %d)", httpCode);
+            lv_label_set_text_fmt(lbl_ota_status, MDI_ALERT " Check failed (HTTP %d)", httpCode);
             lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
         }
     }
@@ -751,7 +751,7 @@ static void otaRecovery() {
 // Returns true if any task was force-killed (indicates possible DMA leak).
 static bool otaStopTasks() {
     if (lbl_ota_status) {
-        lv_label_set_text(lbl_ota_status, LV_SYMBOL_REFRESH " Stopping background tasks...");
+        lv_label_set_text(lbl_ota_status, MDI_REFRESH " Stopping background tasks...");
     }
     lv_tick_inc(10);
     lv_refr_now(NULL);
@@ -861,7 +861,7 @@ static void otaCheckDMA() {
                 free_dma, OTA_TARGET_FREE_DMA, (unsigned long)elapsed);
             if (lbl_ota_status) {
                 lv_label_set_text_fmt(lbl_ota_status,
-                    LV_SYMBOL_REFRESH " Freeing memory... (%d/%d KB)",
+                    MDI_REFRESH " Freeing memory... (%d/%d KB)",
                     (int)(free_dma / 1024), (int)(OTA_TARGET_FREE_DMA / 1024));
                 lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xAAAAAA), 0);
             }
@@ -893,7 +893,7 @@ static void otaCheckDMA() {
         prefs.putString(NVS_KEY_OTA_URL, download_url.c_str());
         prefs.end();
         if (lbl_ota_status) {
-            lv_label_set_text(lbl_ota_status, LV_SYMBOL_REFRESH " Restarting to apply update...");
+            lv_label_set_text(lbl_ota_status, MDI_REFRESH " Restarting to apply update...");
             lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFFFFFF), 0);
         }
         lv_tick_inc(10);
@@ -913,7 +913,7 @@ static void otaCheckDMA() {
 static void performOTAUpdate() {
     if (download_url.length() == 0) {
         if (lbl_ota_status) {
-            lv_label_set_text(lbl_ota_status, LV_SYMBOL_WARNING " No update URL found");
+            lv_label_set_text(lbl_ota_status, MDI_ALERT " No update URL found");
             lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
         }
         return;
@@ -926,7 +926,7 @@ static void performOTAUpdate() {
     if (btn_install_update) lv_obj_add_state(btn_install_update, LV_STATE_DISABLED);
     if (btn_check_update) lv_obj_add_state(btn_check_update, LV_STATE_DISABLED);
     if (lbl_ota_status) {
-        lv_label_set_text(lbl_ota_status, LV_SYMBOL_REFRESH " Preparing update...");
+        lv_label_set_text(lbl_ota_status, MDI_REFRESH " Preparing update...");
         lv_obj_set_style_text_color(lbl_ota_status, COL_ACCENT, 0);
     }
     if (bar_ota_progress) {
@@ -949,7 +949,7 @@ static void performOTAUpdate() {
         unsigned long wait_ms = OTA_HTTPS_COOLDOWN_MS - elapsed;
         Serial.printf("[OTA] Waiting for previous HTTPS cleanup: %lums\n", wait_ms);
         if (lbl_ota_status) {
-            lv_label_set_text(lbl_ota_status, LV_SYMBOL_REFRESH " Waiting for network cleanup...");
+            lv_label_set_text(lbl_ota_status, MDI_REFRESH " Waiting for network cleanup...");
         }
         lv_tick_inc(10);
         lv_refr_now(NULL);
@@ -976,7 +976,7 @@ static void performOTAUpdate() {
     // The retry loop retries on connection-level failures (stream drops,
     // 0 bytes received). Stall and timeout are fatal — do not retry.
     if (lbl_ota_status) {
-        lv_label_set_text(lbl_ota_status, LV_SYMBOL_DOWNLOAD " Connecting to server...");
+        lv_label_set_text(lbl_ota_status, MDI_DOWNLOAD " Connecting to server...");
     }
     if (lbl_ota_progress) {
         lv_label_set_text(lbl_ota_progress, "0%");
@@ -1003,7 +1003,7 @@ static void performOTAUpdate() {
             for (uint32_t s = wait_sec; s > 0; s--) {
                 if (lbl_ota_status) {
                     lv_label_set_text_fmt(lbl_ota_status,
-                        LV_SYMBOL_REFRESH " Retrying in %lus... (%d/%d)",
+                        MDI_REFRESH " Retrying in %lus... (%d/%d)",
                         (unsigned long)s, attempt, OTA_TLS_MAX_RETRIES);
                     lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFFA500), 0);
                 }
@@ -1015,7 +1015,7 @@ static void performOTAUpdate() {
 
             if (lbl_ota_status) {
                 lv_label_set_text_fmt(lbl_ota_status,
-                    LV_SYMBOL_DOWNLOAD " Connecting (attempt %d/%d)...", attempt, OTA_TLS_MAX_RETRIES);
+                    MDI_DOWNLOAD " Connecting (attempt %d/%d)...", attempt, OTA_TLS_MAX_RETRIES);
                 lv_obj_set_style_text_color(lbl_ota_status, COL_ACCENT, 0);
             }
             lv_tick_inc(10);
@@ -1039,7 +1039,7 @@ static void performOTAUpdate() {
         // sdio_push_data_to_queue assert crash). Rendering before TLS connect is safe:
         // no firmware is flowing yet so no unexpected lwIP DMA consumption occurs.
         if (lbl_ota_status) {
-            lv_label_set_text(lbl_ota_status, LV_SYMBOL_DOWNLOAD " Downloading firmware...");
+            lv_label_set_text(lbl_ota_status, MDI_DOWNLOAD " Downloading firmware...");
             lv_obj_set_style_text_color(lbl_ota_status, COL_ACCENT, 0);
         }
         lv_tick_inc(10);
@@ -1055,7 +1055,7 @@ static void performOTAUpdate() {
 
         if (httpCode != 200) {
             if (lbl_ota_status) {
-                lv_label_set_text_fmt(lbl_ota_status, LV_SYMBOL_WARNING " Download failed (HTTP %d)", httpCode);
+                lv_label_set_text_fmt(lbl_ota_status, MDI_ALERT " Download failed (HTTP %d)", httpCode);
                 lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
             }
             httpPtr->end(); clientPtr->stop();
@@ -1069,7 +1069,7 @@ static void performOTAUpdate() {
         if (contentLength <= 0 || contentLength > OTA_MAX_FIRMWARE_SIZE) {
             Serial.printf("[OTA] Invalid firmware size: %d bytes\n", contentLength);
             if (lbl_ota_status) {
-                lv_label_set_text(lbl_ota_status, LV_SYMBOL_WARNING " Invalid firmware file");
+                lv_label_set_text(lbl_ota_status, MDI_ALERT " Invalid firmware file");
                 lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
             }
             httpPtr->end(); clientPtr->stop();
@@ -1094,7 +1094,7 @@ static void performOTAUpdate() {
                 post_tls_total, OTA_MIN_DMA_AFTER_TLS);
             if (lbl_ota_status) {
                 lv_label_set_text_fmt(lbl_ota_status,
-                    LV_SYMBOL_REFRESH " Low memory after TLS (%d KB) - retrying...",
+                    MDI_REFRESH " Low memory after TLS (%d KB) - retrying...",
                     post_tls_total / 1024);
                 lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFFA500), 0);
             }
@@ -1127,7 +1127,7 @@ static void performOTAUpdate() {
                 Serial.printf("[OTA] STALL: No data for %ds at %d%% - aborting\n",
                     OTA_STALL_TIMEOUT_MS / 1000, (int)(written * 100 / contentLength));
                 if (lbl_ota_status) {
-                    lv_label_set_text(lbl_ota_status, LV_SYMBOL_WARNING " Download stalled - network timeout");
+                    lv_label_set_text(lbl_ota_status, MDI_ALERT " Download stalled - network timeout");
                     lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
                 }
                 lv_tick_inc(10);
@@ -1140,7 +1140,7 @@ static void performOTAUpdate() {
                 Serial.printf("[OTA] TIMEOUT: >%ds at %d%% - aborting\n",
                     OTA_DOWNLOAD_TIMEOUT_MS / 1000, (int)(written * 100 / contentLength));
                 if (lbl_ota_status) {
-                    lv_label_set_text(lbl_ota_status, LV_SYMBOL_WARNING " Download timeout - try again");
+                    lv_label_set_text(lbl_ota_status, MDI_ALERT " Download timeout - try again");
                     lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
                 }
                 lv_tick_inc(10);
@@ -1160,7 +1160,7 @@ static void performOTAUpdate() {
                     if (!Update.begin(contentLength)) {
                         Serial.println("[OTA] Update.begin() failed — not enough flash space");
                         if (lbl_ota_status) {
-                            lv_label_set_text(lbl_ota_status, LV_SYMBOL_WARNING " Not enough space for OTA");
+                            lv_label_set_text(lbl_ota_status, MDI_ALERT " Not enough space for OTA");
                             lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
                         }
                         lv_tick_inc(10);
@@ -1243,7 +1243,7 @@ static void performOTAUpdate() {
 
         if (attempt == OTA_TLS_MAX_RETRIES) {
             if (lbl_ota_status) {
-                lv_label_set_text(lbl_ota_status, LV_SYMBOL_WARNING " Download failed - try again later");
+                lv_label_set_text(lbl_ota_status, MDI_ALERT " Download failed - try again later");
                 lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
             }
             lv_tick_inc(10);
@@ -1259,7 +1259,7 @@ static void performOTAUpdate() {
         Serial.printf("[OTA] All %d attempts failed (written=%d, expected=%d) — recovering\n",
             OTA_TLS_MAX_RETRIES, written, contentLength);
         if (lbl_ota_status) {
-            lv_label_set_text(lbl_ota_status, LV_SYMBOL_WARNING " Download failed - try again later");
+            lv_label_set_text(lbl_ota_status, MDI_ALERT " Download failed - try again later");
             lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
         }
         lv_tick_inc(10);
@@ -1274,7 +1274,7 @@ static void performOTAUpdate() {
     // Reaches here only on full successful download (written == contentLength).
     if (bar_ota_progress) lv_bar_set_value(bar_ota_progress, 100, LV_ANIM_OFF);
     if (lbl_ota_progress) lv_label_set_text(lbl_ota_progress, "100%");
-    if (lbl_ota_status) lv_label_set_text(lbl_ota_status, LV_SYMBOL_OK " Download complete!");
+    if (lbl_ota_status) lv_label_set_text(lbl_ota_status, MDI_CHECK " Download complete!");
     lv_tick_inc(10);
     lv_refr_now(NULL);
 
@@ -1284,7 +1284,7 @@ static void performOTAUpdate() {
     // START INSTALL
     if (bar_ota_progress) lv_bar_set_value(bar_ota_progress, 0, LV_ANIM_OFF);
     if (lbl_ota_progress) lv_label_set_text(lbl_ota_progress, "");
-    if (lbl_ota_status) lv_label_set_text(lbl_ota_status, LV_SYMBOL_REFRESH " Installing & verifying...");
+    if (lbl_ota_status) lv_label_set_text(lbl_ota_status, MDI_REFRESH " Installing & verifying...");
     lv_tick_inc(10);
     lv_refr_now(NULL);
 
@@ -1318,13 +1318,13 @@ static void performOTAUpdate() {
             ESP.restart();
         } else {
             if (lbl_ota_status) {
-                lv_label_set_text(lbl_ota_status, LV_SYMBOL_WARNING " Update failed: Not finished");
+                lv_label_set_text(lbl_ota_status, MDI_ALERT " Update failed: Not finished");
                 lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
             }
         }
     } else {
         if (lbl_ota_status) {
-            lv_label_set_text_fmt(lbl_ota_status, LV_SYMBOL_WARNING " Update failed: %s", Update.errorString());
+            lv_label_set_text_fmt(lbl_ota_status, MDI_ALERT " Update failed: %s", Update.errorString());
             lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
         }
     }
@@ -1341,7 +1341,7 @@ void ev_check_update(lv_event_t* e) {
 void ev_install_update(lv_event_t* e) {
     if (download_url.isEmpty()) {
         if (lbl_ota_status) {
-            lv_label_set_text(lbl_ota_status, LV_SYMBOL_WARNING " No firmware URL — check for updates first");
+            lv_label_set_text(lbl_ota_status, MDI_ALERT " No firmware URL — check for updates first");
             lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFF6B6B), 0);
         }
         return;
@@ -1363,7 +1363,7 @@ void ev_install_update(lv_event_t* e) {
 
     Serial.println("[OTA] URL saved to NVS — restarting for boot OTA");
     if (lbl_ota_status) {
-        lv_label_set_text(lbl_ota_status, LV_SYMBOL_REFRESH " Restarting to install update...");
+        lv_label_set_text(lbl_ota_status, MDI_REFRESH " Restarting to install update...");
         lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFFFFFF), 0);
     }
     lv_tick_inc(10);
@@ -1394,7 +1394,7 @@ void triggerPendingOTA() {
         Serial.printf("[OTA] Auto-trigger: using saved URL (no pre-OTA HTTPS - max DMA preserved)\n");
         download_url = saved_url;
         if (lbl_ota_status) {
-            lv_label_set_text(lbl_ota_status, LV_SYMBOL_REFRESH " Resuming update after restart...");
+            lv_label_set_text(lbl_ota_status, MDI_REFRESH " Resuming update after restart...");
             lv_obj_set_style_text_color(lbl_ota_status, lv_color_hex(0xFFFFFF), 0);
         }
         lv_tick_inc(10);
@@ -1670,7 +1670,8 @@ static void updateAlbumArtRequest(SonosDevice* d) {
     // returns "changed", calling requestAlbumArt() every frame and keeping art_download_in_progress=true
     // permanently (blocking the clock screensaver and spamming last_track_change_ms).
     static String last_requested_art_url = "";
-    bool hasArt = (d->albumArtURL.length() > 0) || (d->isRadioStation && d->radioStationArtURL.length() > 0);
+    bool hasArt = !d->isLineIn &&
+                  ((d->albumArtURL.length() > 0) || (d->isRadioStation && d->radioStationArtURL.length() > 0));
     bool artChanged = uri_changed || (d->albumArtURL.length() > 0 && d->albumArtURL != last_requested_art_url);
 
     // For radio stations: also check if radioStationArtURL changed (even if albumArtURL is empty)
@@ -1788,7 +1789,7 @@ void updateUI() {
     String lyrics_key = d->currentArtist + "|" + d->currentTrack;
     if (lyrics_key != lyrics_last_track && d->currentTrack.length() > 0) {
         last_track_change_ms = millis();
-        if (lyrics_enabled && !d->isRadioStation) {
+        if (lyrics_enabled && !d->isRadioStation && !d->isLineIn) {
             // Abort any running task FIRST. requestLyrics() checks artist.length()==0
             // at line 1 and returns false without ever touching lyrics_abort_requested —
             // so for podcasts/audiobooks the old task keeps running, finishes, writes
@@ -1873,7 +1874,7 @@ void updateUI() {
     // Mute button
     if (d->isMuted != ui_muted && btn_mute) {
         lv_obj_t* lbl = lv_obj_get_child(btn_mute, 0);
-        lv_label_set_text(lbl, d->isMuted ? LV_SYMBOL_MUTE : LV_SYMBOL_VOLUME_MAX);
+        lv_label_set_text(lbl, d->isMuted ? MDI_VOLUME_OFF : MDI_VOLUME_HIGH);
         ui_muted = d->isMuted;
     }
 
@@ -1911,6 +1912,14 @@ void updateUI() {
     // NOTE: last_art_url is GLOBAL (extern in ui_common.h), don't shadow it!
     updateAlbumArtRequest(d);
     displayCompletedArt();
+
+    // Line-in mode takes priority over radio mode — checked first.
+    // setLineInMode(false) is called here when transitioning back to music/radio.
+    if (d->isLineIn) {
+        updateLineInUI();
+        return;
+    }
+    setLineInMode(false);  // ensure restored if we just left line-in
 
     // Radio mode UI adaptation - must be at the END of updateUI()
     updateRadioModeUI();

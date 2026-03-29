@@ -46,11 +46,28 @@ void createMainScreen() {
 
     // Placeholder when no art — centered on the art image area
     art_placeholder = lv_label_create(panel_art);
-    lv_label_set_text(art_placeholder, LV_SYMBOL_AUDIO);
-    lv_obj_set_style_text_font(art_placeholder, &lv_font_montserrat_32, 0);
+    lv_label_set_text(art_placeholder, MDI_MUSIC_NOTE);
+    lv_obj_set_style_text_font(art_placeholder, &lv_font_mdi_32, 0);
     lv_obj_set_style_text_color(art_placeholder, COL_TEXT2, 0);
     lv_obj_align(art_placeholder, LV_ALIGN_CENTER, 15, 0);  // +15px: center of art at x=240, center of panel at x=225
 
+
+    // Line-in mode: waveform hero icon (hidden until x-rincon-stream: detected)
+    // setLineInMode(true) shows these and hides img_album + art_placeholder
+    lbl_linein_icon = lv_label_create(panel_art);
+    lv_label_set_text(lbl_linein_icon, MDI_WAVEFORM);
+    lv_obj_set_style_text_font(lbl_linein_icon, &lv_font_mdi_80, 0);
+    lv_obj_set_style_text_color(lbl_linein_icon, COL_ACCENT, 0);
+    lv_obj_align(lbl_linein_icon, LV_ALIGN_CENTER, 15, -20);  // +15px art-centre offset, -20px to leave room below
+    lv_obj_add_flag(lbl_linein_icon, LV_OBJ_FLAG_HIDDEN);
+
+    lbl_linein_subtitle = lv_label_create(panel_art);
+    lv_label_set_text(lbl_linein_subtitle, "LIVE AUDIO");
+    lv_obj_set_style_text_font(lbl_linein_subtitle, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_linein_subtitle, lv_color_hex(0x888888), 0);
+    lv_obj_set_style_text_letter_space(lbl_linein_subtitle, 3, 0);  // spaced-out caps for modern look
+    lv_obj_align(lbl_linein_subtitle, LV_ALIGN_CENTER, 15, 58); // below icon (+80px icon height / 2 + gap)
+    lv_obj_add_flag(lbl_linein_subtitle, LV_OBJ_FLAG_HIDDEN);
 
     // Lyrics status indicator — top-left corner of art image
     lbl_lyrics_status = lv_label_create(panel_art);

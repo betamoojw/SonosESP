@@ -430,7 +430,7 @@ void logHeapStatus() {
     if (free_heap < 50000) {
         Serial.println("[HEAP] WARNING: Low memory!");
     }
-    if (free_dma < 70000) {
+    if (free_dma < ART_MIN_DMA_PRE_BURST) {
         Serial.printf("[DMA] WARNING: DMA depleting (%dKB) — art/lyrics may abort. "
                       "Session depletion ~3.7KB/song. WiFi reconnect fires at 3 consecutive aborts.\n",
                       (int)(free_dma / 1024));
@@ -473,9 +473,9 @@ static void mainAppTask(void* param) {
                 // entire recovery window (disconnect + reconnect + stabilise = ~47s).
                 // Without this, pollingTask fires ~11 SOAPs during the 30s reconnect wait,
                 // creating ~44KB of TIME_WAIT PCBs.  Those PCBs survive WiFi stop (lwIP runs
-                // independently) and are still live when WiFi reconnects, so DMA only recovers
-                // to ~68KB — still below the 70KB threshold.  With the flag set here, no new
-                // PCBs form; existing ones expire during the ~47s window → DMA reaches ~112KB.
+                // independently) and are still live when WiFi reconnects, consuming extra DMA.
+                // With flag set here, no new PCBs form; existing ones expire during the ~47s
+                // window → DMA after reconnect ≈ 117KB - 49KB (WiFi RX pool) = 68KB > 64KB ✓.
                 art_download_in_progress = true;
                 Serial.println("[MAIN] DMA recovery: stopping WiFi to release dynamic RX pool");
                 WiFi.disconnect(true);   // esp_wifi_stop() releases ~51KB WiFi dynamic RX buffers
@@ -524,7 +524,7 @@ static void mainAppTask(void* param) {
                         // + 44KB recovered PCBs). Early-exit once above comfort threshold.
                         {
                             unsigned long t_stab = millis();
-                            const size_t kComfortDMA = ART_MIN_DMA_PRE_BURST + 10000;  // 80KB
+                            const size_t kComfortDMA = ART_MIN_DMA_PRE_BURST + 4000;   // 68KB — reachable ceiling with WiFi connected
                             while (millis() - t_stab < 15000) {
                                 lv_tick_inc(5); lv_timer_handler();
                                 esp_task_wdt_reset();

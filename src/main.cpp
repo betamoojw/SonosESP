@@ -535,6 +535,24 @@ static void mainAppTask(void* param) {
                                           (unsigned)(heap_caps_get_free_size(MALLOC_CAP_DMA) / 1024),
                                           millis() - t_stab);
                         }
+                        // If DMA is still below the art-download threshold after the full
+                        // stabilisation window, the heap is permanently fragmented — the WiFi
+                        // RX pool plus residual PCBs consume more DMA than the system has
+                        // available.  Releasing the art task here would cause it to abort
+                        // immediately and request another recovery cycle, looping indefinitely.
+                        // A full restart is the only path that frees everything cleanly.
+                        {
+                            size_t dma_post = heap_caps_get_free_size(MALLOC_CAP_DMA);
+                            if (dma_post < ART_MIN_DMA_PRE_BURST) {
+                                Serial.printf("[MAIN] DMA still insufficient after stabilisation "
+                                              "(%uKB < %uKB) — restarting\n",
+                                              (unsigned)(dma_post / 1024),
+                                              (unsigned)(ART_MIN_DMA_PRE_BURST / 1024));
+                                esp_task_wdt_reset();
+                                vTaskDelay(pdMS_TO_TICKS(1000));
+                                esp_restart();
+                            }
+                        }
                         // Release polling suppression before signalling art task.
                         // Art task re-sets the flag itself after sdioPreWait on its next iteration.
                         art_download_in_progress = false;

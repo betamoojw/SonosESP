@@ -69,6 +69,22 @@ void createMainScreen() {
     lv_obj_align(lbl_linein_subtitle, LV_ALIGN_CENTER, 15, 58); // below icon (+80px icon height / 2 + gap)
     lv_obj_add_flag(lbl_linein_subtitle, LV_OBJ_FLAG_HIDDEN);
 
+    // TV audio mode: television hero icon (hidden until x-sonos-htastream: detected)
+    lbl_tv_icon = lv_label_create(panel_art);
+    lv_label_set_text(lbl_tv_icon, MDI_TELEVISION);
+    lv_obj_set_style_text_font(lbl_tv_icon, &lv_font_mdi_80, 0);
+    lv_obj_set_style_text_color(lbl_tv_icon, COL_ACCENT, 0);
+    lv_obj_align(lbl_tv_icon, LV_ALIGN_CENTER, 15, -20);
+    lv_obj_add_flag(lbl_tv_icon, LV_OBJ_FLAG_HIDDEN);
+
+    lbl_tv_subtitle = lv_label_create(panel_art);
+    lv_label_set_text(lbl_tv_subtitle, "TV AUDIO");
+    lv_obj_set_style_text_font(lbl_tv_subtitle, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_tv_subtitle, lv_color_hex(0x888888), 0);
+    lv_obj_set_style_text_letter_space(lbl_tv_subtitle, 3, 0);
+    lv_obj_align(lbl_tv_subtitle, LV_ALIGN_CENTER, 15, 58);
+    lv_obj_add_flag(lbl_tv_subtitle, LV_OBJ_FLAG_HIDDEN);
+
     // Lyrics status indicator — top-left corner of art image
     lbl_lyrics_status = lv_label_create(panel_art);
     lv_label_set_text(lbl_lyrics_status, "");

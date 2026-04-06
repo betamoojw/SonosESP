@@ -1525,7 +1525,7 @@ static void displayCompletedArt() {
 static void updateNextTrackUI(SonosDevice* d) {
     static String last_next_title = "";
 
-    if (!d->isRadioStation && !d->isLineIn && d->queueSize > 0 && d->currentTrackNumber > 0) {
+    if (!d->isRadioStation && !d->isLineIn && !d->isTvAudio && d->queueSize > 0 && d->currentTrackNumber > 0) {
         int nextIdx = -1;
 
         // Find next track after current
@@ -1671,7 +1671,7 @@ static void updateAlbumArtRequest(SonosDevice* d) {
     // returns "changed", calling requestAlbumArt() every frame and keeping art_download_in_progress=true
     // permanently (blocking the clock screensaver and spamming last_track_change_ms).
     static String last_requested_art_url = "";
-    bool hasArt = !d->isLineIn &&
+    bool hasArt = !d->isLineIn && !d->isTvAudio &&
                   ((d->albumArtURL.length() > 0) || (d->isRadioStation && d->radioStationArtURL.length() > 0));
     bool artChanged = uri_changed || (d->albumArtURL.length() > 0 && d->albumArtURL != last_requested_art_url);
 
@@ -1790,7 +1790,7 @@ void updateUI() {
     String lyrics_key = d->currentArtist + "|" + d->currentTrack;
     if (lyrics_key != lyrics_last_track && d->currentTrack.length() > 0) {
         last_track_change_ms = millis();
-        if (lyrics_enabled && !d->isRadioStation && !d->isLineIn) {
+        if (lyrics_enabled && !d->isRadioStation && !d->isLineIn && !d->isTvAudio) {
             // Abort any running task FIRST. requestLyrics() checks artist.length()==0
             // at line 1 and returns false without ever touching lyrics_abort_requested —
             // so for podcasts/audiobooks the old task keeps running, finishes, writes
@@ -1914,13 +1914,20 @@ void updateUI() {
     updateAlbumArtRequest(d);
     displayCompletedArt();
 
-    // Line-in mode takes priority over radio mode — checked first.
-    // setLineInMode(false) is called here when transitioning back to music/radio.
+    // Line-in and TV audio modes take priority over radio mode — checked first.
+    // setLineInMode/setTvAudioMode(false) restores UI when transitioning back to music/radio.
     if (d->isLineIn) {
+        setTvAudioMode(false);
         updateLineInUI();
         return;
     }
-    setLineInMode(false);  // ensure restored if we just left line-in
+    if (d->isTvAudio) {
+        setLineInMode(false);
+        updateTvAudioUI();
+        return;
+    }
+    setLineInMode(false);
+    setTvAudioMode(false);
 
     // Radio mode UI adaptation - must be at the END of updateUI()
     updateRadioModeUI();

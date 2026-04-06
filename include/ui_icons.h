@@ -6,7 +6,7 @@
  *             src/fonts/lv_font_mdi_24.c  (24px, bpp4)  — sidebar icons + large buttons (includes Montserrat ASCII)
  *             src/fonts/lv_font_mdi_32.c  (32px, bpp4)  — shuffle/repeat/volume
  *             src/fonts/lv_font_mdi_40.c  (40px, bpp4)  — play/pause + prev/next
- *             src/fonts/lv_font_mdi_80.c  (80px, bpp4)  — line-in waveform hero icon
+ *             src/fonts/lv_font_mdi_80.c  (80px, bpp4)  — line-in waveform + TV hero icons
  *
  * Generated with:
  *   npx lv_font_conv --font node_modules/@mdi/font/fonts/materialdesignicons-webfont.ttf
@@ -38,6 +38,7 @@
 #define MDI_BROADCAST          "\xF3\xB1\x9C\xA0"   // U+F1720  mdi-broadcast
 #define MDI_RADIO              "\xF3\xB0\x90\xB9"   // U+F0439  mdi-radio
 #define MDI_WAVEFORM           "\xF3\xB1\xA1\xAC"   // U+F186C  mdi-audio-input-stereo-minijack  (line-in hero)
+#define MDI_TELEVISION         "\xF3\xB0\x94\x82"   // U+F0502  mdi-television  (TV audio hero)
 
 // ── Settings / navigation (lv_font_mdi_24, includes Montserrat ASCII) ───────
 #define MDI_SPEAKER            "\xF3\xB0\x93\x83"   // U+F04C3  mdi-speaker

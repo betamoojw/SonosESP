@@ -134,6 +134,10 @@ lv_obj_t*    img_blur_bg   = nullptr;
 lv_obj_t*    lbl_linein_icon     = nullptr;  // 80px waveform icon, accent colour, pulsing
 lv_obj_t*    lbl_linein_subtitle = nullptr;  // "LIVE AUDIO" label below icon
 
+// TV audio mode widgets (created hidden in createMainScreen, shown by setTvAudioMode)
+lv_obj_t*    lbl_tv_icon         = nullptr;  // 80px television icon, accent colour, pulsing
+lv_obj_t*    lbl_tv_subtitle     = nullptr;  // "TV AUDIO" label below icon
+
 // Current ambient bright color (3× brightened dominant color) — shared between
 // color_anim_cb (writer) and updateUI (reader, for shuffle/repeat inactive state)
 lv_color_t g_ambient_bright = lv_color_hex(0xD4A84B);  // COL_ACCENT as default until first art

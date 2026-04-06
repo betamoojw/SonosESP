@@ -553,6 +553,16 @@ static void mainAppTask(void* param) {
                                 esp_restart();
                             }
                         }
+                        // Stamp network timestamps before releasing the art task.
+                        // Both last_art_download_end_ms and last_queue_fetch_time are stale
+                        // (from before the ~40s reconnect window), so all sdioPreWait
+                        // cooldowns would be near-zero and art would fire immediately —
+                        // concurrent with the polling task's first updateQueue() (which
+                        // queued up during reconnect) → pkt_rxbuff overflow → :928.
+                        // Setting them to now enforces the full inter-download (1s) and
+                        // queue-poll (3s) cooldowns on the first post-reconnect download.
+                        last_art_download_end_ms = millis();
+                        last_queue_fetch_time    = millis();
                         // Release polling suppression before signalling art task.
                         // Art task re-sets the flag itself after sdioPreWait on its next iteration.
                         art_download_in_progress = false;

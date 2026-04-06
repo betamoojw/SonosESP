@@ -1153,7 +1153,8 @@ bool SonosController::updateTrackInfo() {
         // aac:// is used by both live AAC radio streams AND Apple Music/streaming service
         // tracks played from a queue. Treat as radio only when the queue is empty.
         dev->isLineIn       = trackURI.startsWith("x-rincon-stream:");
-        dev->isRadioStation = !dev->isLineIn && (isRadioURI(trackURI) ||
+        dev->isTvAudio      = trackURI.startsWith("x-sonos-htastream:");
+        dev->isRadioStation = !dev->isLineIn && !dev->isTvAudio && (isRadioURI(trackURI) ||
                               (trackURI.startsWith("aac://") && dev->queueSize == 0));
 
         // Get metadata and decode HTML entities
@@ -1365,6 +1366,15 @@ bool SonosController::updateQueue(int startIndex) {
     size_t dma_pre_q = heap_caps_get_free_size(MALLOC_CAP_DMA);
     String resp = sendSOAP("ContentDirectory", "Browse", queueArgs.c_str());
     size_t dma_post_q = heap_caps_get_free_size(MALLOC_CAP_DMA);
+
+    // Stamp IMMEDIATELY after sendSOAP returns, before any XML parsing.
+    // The art task reads last_queue_fetch_time in sdioPreWait and may be scheduled
+    // between the sendSOAP return and the stamp — leaving a window where art sees
+    // a stale timestamp and fires a download concurrent with the SOAP residue.
+    // Stamping here closes that window to the minimum possible (a few instructions).
+    // Also stamps on empty response: even a failed SOAP leaves TCP residue in SDIO.
+    last_queue_fetch_time = millis();
+
     Serial.printf("[QUEUE/DMA] pre=%uKB post=%uKB delta=%+dB start=%d batch=%d\n",
                   (unsigned)(dma_pre_q / 1024), (unsigned)(dma_post_q / 1024),
                   (int)((long)dma_post_q - (long)dma_pre_q), startIndex, SONOS_QUEUE_BATCH_SIZE);
@@ -1373,10 +1383,6 @@ bool SonosController::updateQueue(int startIndex) {
         Serial.printf("[SONOS] Queue response empty\n");
         return false;
     }
-
-    // Record completion time so art/lyrics tasks wait before starting a large download.
-    // sendSOAP() does NOT check this — SOAP play/pause commands are unaffected.
-    last_queue_fetch_time = millis();
 
     SonosDevice* dev = getCurrentDevice();
     if (!dev) return false;

@@ -133,6 +133,22 @@ bool sdioPreWait(const char* tag, uint32_t flags,
             vTaskDelay(pdMS_TO_TICKS(threshold - elapsed));
         }
     }
+    if (_aborted(abort_flag1, abort_flag2)) return false;
+
+    // ── 7. Queue poll re-check ────────────────────────────────────────────────
+    // The polling task runs freely during the inter-download wait above and may
+    // fire updateQueue() at any point during that sleep.  Check #5 ran before
+    // the wait and cannot see a queue fetch that occurs during it.  Re-check
+    // here so we don't exit sdioPreWait with fresh 20KB SOAP residue in
+    // pkt_rxbuff that will combine with the art download burst → :928 crash.
+    if ((flags & SDIO_WAIT_QUEUE_POLL) && last_queue_fetch_time > 0) {
+        unsigned long elapsed = millis() - last_queue_fetch_time;
+        if (elapsed < SDIO_QUEUE_POLL_COOLDOWN_MS) {
+            Serial.printf("[%s] Queue poll re-check: waiting %lums\n",
+                          tag, SDIO_QUEUE_POLL_COOLDOWN_MS - elapsed);
+            vTaskDelay(pdMS_TO_TICKS(SDIO_QUEUE_POLL_COOLDOWN_MS - elapsed));
+        }
+    }
 
     return !_aborted(abort_flag1, abort_flag2);
 }

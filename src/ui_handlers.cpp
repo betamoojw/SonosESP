@@ -1786,7 +1786,8 @@ void updateUI() {
     }
 
     // Fetch synced lyrics when track changes
-    static String lyrics_last_track = "";
+    // lyrics_last_track is a global (ui_globals.cpp) so clock exit can reset it to ""
+    // forcing a re-fetch for the current track when returning from the clock screen.
     String lyrics_key = d->currentArtist + "|" + d->currentTrack;
     if (lyrics_key != lyrics_last_track && d->currentTrack.length() > 0) {
         last_track_change_ms = millis();

@@ -65,8 +65,8 @@ void setTvAudioMode(bool enable) {
             lv_label_set_text(lbl_title, "TV Audio");
         }
         if (lbl_artist) {
-            lv_label_set_long_mode(lbl_artist, LV_LABEL_LONG_DOT);
-            lv_obj_set_height(lbl_artist, LV_SIZE_CONTENT);
+            lv_label_set_long_mode(lbl_artist, LV_LABEL_LONG_SCROLL_CIRCULAR);
+            lv_obj_set_height(lbl_artist, 20);
             lv_label_set_text(lbl_artist, "");
         }
 
@@ -105,8 +105,8 @@ void setTvAudioMode(bool enable) {
 
         if (lbl_title)  lv_label_set_long_mode(lbl_title,  LV_LABEL_LONG_SCROLL_CIRCULAR);
         if (lbl_artist) {
-            lv_label_set_long_mode(lbl_artist, LV_LABEL_LONG_DOT);
-            lv_obj_set_height(lbl_artist, LV_SIZE_CONTENT);
+            lv_label_set_long_mode(lbl_artist, LV_LABEL_LONG_SCROLL_CIRCULAR);
+            lv_obj_set_height(lbl_artist, 20);
         }
     }
 }

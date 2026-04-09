@@ -69,8 +69,8 @@ void setLineInMode(bool enable) {
         }
         // Artist: single-line, show source device name (filled by updateLineInUI)
         if (lbl_artist) {
-            lv_label_set_long_mode(lbl_artist, LV_LABEL_LONG_DOT);
-            lv_obj_set_height(lbl_artist, LV_SIZE_CONTENT);
+            lv_label_set_long_mode(lbl_artist, LV_LABEL_LONG_SCROLL_CIRCULAR);
+            lv_obj_set_height(lbl_artist, 20);
         }
 
     } else {
@@ -106,11 +106,11 @@ void setLineInMode(bool enable) {
 
         if (lbl_album) lv_obj_clear_flag(lbl_album, LV_OBJ_FLAG_HIDDEN);
 
-        // Restore title scroll mode and artist to single-line
+        // Restore title and artist scroll modes
         if (lbl_title)  lv_label_set_long_mode(lbl_title,  LV_LABEL_LONG_SCROLL_CIRCULAR);
         if (lbl_artist) {
-            lv_label_set_long_mode(lbl_artist, LV_LABEL_LONG_DOT);
-            lv_obj_set_height(lbl_artist, LV_SIZE_CONTENT);
+            lv_label_set_long_mode(lbl_artist, LV_LABEL_LONG_SCROLL_CIRCULAR);
+            lv_obj_set_height(lbl_artist, 20);
         }
     }
 }

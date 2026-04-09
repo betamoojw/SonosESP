@@ -20,7 +20,7 @@
 #define DEFAULT_WIFI_PASSWORD ""
 
 // Firmware version
-#define FIRMWARE_VERSION "1.7.5"
+#define FIRMWARE_VERSION "1.7.6"
 #define GITHUB_REPO "OpenSurface/SonosESP"
 #define GITHUB_API_URL "https://api.github.com/repos/" GITHUB_REPO "/releases/latest"
 
@@ -93,6 +93,7 @@ extern lv_img_dsc_t art_dsc;
 extern uint16_t *art_buffer;
 extern uint16_t *art_temp_buffer;
 extern String last_art_url, pending_art_url;
+extern String lyrics_last_track;
 extern volatile bool art_ready;
 extern volatile bool art_show_placeholder;
 extern SemaphoreHandle_t art_mutex;

@@ -114,6 +114,7 @@ uint16_t* art_buffer = nullptr;
 uint16_t* art_temp_buffer = nullptr;
 String last_art_url = "";
 String pending_art_url = "";
+String lyrics_last_track = "";  // Globalised so clock exit can reset it (issue #62)
 volatile bool art_ready = false;
 volatile bool art_show_placeholder = false;  // Signal UI to show placeholder (art permanently failed)
 SemaphoreHandle_t art_mutex = nullptr;

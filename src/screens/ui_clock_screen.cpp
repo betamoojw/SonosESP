@@ -921,7 +921,8 @@ void exitClockScreen() {
     // Restart art + lyrics tasks — Sonos may have a pending art URL
     art_shutdown_requested    = false;
     lyrics_shutdown_requested = false;  // Was set on clock entry; must clear on exit
-    last_art_url = "";  // Force re-fetch since track may have changed
+    last_art_url      = "";  // Force art re-fetch — track may have changed during clock
+    lyrics_last_track = "";  // Force lyrics re-fetch — display cleared during clock (issue #62)
     if (!albumArtTaskHandle) {
         createArtTask();  // PSRAM stack — frees 20KB internal SRAM for SDIO/WiFi DMA
     }

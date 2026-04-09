@@ -179,8 +179,8 @@ void createMainScreen() {
     // Artist (gray, smaller) — below title
     lbl_artist = lv_label_create(panel_right);
     lv_obj_set_pos(lbl_artist, 15, 132);
-    lv_obj_set_width(lbl_artist, 265);
-    lv_label_set_long_mode(lbl_artist, LV_LABEL_LONG_DOT);
+    lv_obj_set_size(lbl_artist, 265, 20);  // Fixed height prevents text wrapping over elements below (issue #63)
+    lv_label_set_long_mode(lbl_artist, LV_LABEL_LONG_SCROLL_CIRCULAR);  // Scroll like title — shows full name
     lv_label_set_text(lbl_artist, "");
     lv_obj_set_style_text_color(lbl_artist, COL_TEXT2, 0);
     lv_obj_set_style_text_font(lbl_artist, &lv_font_montserrat_16, 0);

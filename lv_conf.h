@@ -77,7 +77,7 @@
 
 /* Enable features we need */
 #define LV_USE_OS LV_OS_NONE
-#define LV_USE_STDLIB_MALLOC LV_STDLIB_CLIB
+#define LV_USE_STDLIB_MALLOC LV_STDLIB_CUSTOM  // PSRAM allocator — see src/lv_malloc_psram.cpp
 #define LV_USE_STDLIB_STRING LV_STDLIB_CLIB
 #define LV_USE_STDLIB_SPRINTF LV_STDLIB_CLIB
 

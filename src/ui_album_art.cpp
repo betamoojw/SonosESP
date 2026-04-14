@@ -1164,6 +1164,25 @@ void albumArtTask(void* param) {
                 // Per-URL tracking was wrong: new song = new URL = counter reset = WiFi recovery never fires.
                 static int dma_fail_count = 0;
                 if (dma_snap < ART_MIN_DMA_PRE_BURST) {
+                    // Before counting as a genuine abort: check whether another task (e.g. lyrics
+                    // HTTPS) currently holds the network_mutex. If so, the DMA dip is transient —
+                    // mbedTLS/TLS session frees ~44KB when the mutex is released (task done).
+                    // Triggering WiFi stop here would kill that active TLS connection, causing its
+                    // task to retry, which opens another TLS session, which drops DMA again →
+                    // infinite loop. Instead: wait for the mutex to become free (≤10s), let DMA
+                    // recover, then retry. Only count genuine depletions (mutex idle, DMA still low).
+                    if (network_mutex != NULL && xSemaphoreGetMutexHolder(network_mutex) != NULL) {
+                        art_download_in_progress = false;
+                        Serial.printf("[ART] DMA low (%uKB) but mutex held — waiting for release\n",
+                                      (unsigned)(dma_snap / 1024));
+                        unsigned long t_wait = millis();
+                        while (xSemaphoreGetMutexHolder(network_mutex) != NULL
+                               && millis() - t_wait < 10000) {
+                            vTaskDelay(pdMS_TO_TICKS(200));
+                        }
+                        // Don't increment dma_fail_count — transient TLS dip, not real depletion.
+                        continue;
+                    }
                     dma_fail_count++;
                     size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
                     Serial.printf("[ART] DMA too low (%u < %u, largest=%uKB) — abort #%d\n",

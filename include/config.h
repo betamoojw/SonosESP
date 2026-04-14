@@ -269,21 +269,22 @@
                                             // Crash scenario: dl-start 22KB > 16KB passes → mid-read check at 8KB
                                             // catches the WiFi-alloc drop → aborts before :928.
 #define ART_MIN_FREE_DMA             8000   // Referenced in boot memory map log only (not a download gate).
-#define ART_MIN_DMA_PRE_BURST       64000   // Min DMA before http.GET() (BEFORE burst arrives).
-                                            // WiFi RX pool ~49KB: with WiFi connected, DMA ceiling ≈ 117-49 = 68KB.
-                                            // 70KB threshold was impossible to reach while connected → infinite
-                                            // recovery loop (abort x3 → WiFi stop → reconnect → 67KB < 70KB → repeat).
-                                            // Crashes at 62KB/59KB were pre-SO_RCVBUF: server blasted 45KB burst,
-                                            // depleting DMA from 62KB→17KB. With SO_RCVBUF=8192 set BEFORE TCP SYN
-                                            // (artPreConnectHTTP), burst is limited to ~8KB → post-burst DMA ~56KB,
-                                            // well above mid-read floor (8KB). 64KB = 2KB above confirmed crash floor
-                                            // (62KB) + sufficient headroom for 8KB burst with SO_RCVBUF active.
-                                            // At DMA<64KB: abort. 3 aborts → WiFi stop+reconnect → ~117KB DMA.
-                                            // Was 70000 (caused infinite recovery loop — WiFi ceiling 68KB < 70KB).
+#define ART_MIN_DMA_PRE_BURST       48000   // Min DMA before http.GET() (BEFORE burst arrives).
+                                            // Observed burst: 13-22KB (server TCP cwnd limited; SO_RCVBUF does NOT
+                                            // limit initial burst on ESP32-P4/lwIP). Post-burst floor = 48-22 = 26KB >>
+                                            // ART_TCP_RCVBUF_DL_SAFETY (16KB). WiFi-connected DMA ceiling ≈ 68KB →
+                                            // post-reconnect DMA ~63KB >> 48KB → art proceeds immediately after reconnect.
+                                            // Was 64000: set against 45KB pre-SO_RCVBUF burst (crash at 62KB→17KB).
+                                            // That burst scenario no longer occurs (observed burst now 13-22KB).
+                                            // NOTE: art abort path also checks network_mutex holder — if mutex held
+                                            // (lyrics TLS active), abort is skipped and task waits for release instead
+                                            // of triggering WiFi stop. See ui_album_art.cpp DMA abort block.
 #define LYRICS_MIN_FREE_DMA         55000   // Min DMA before lyrics HTTPS fetch. mbedTLS AES fragmentation failure
                                             // confirmed at 44-48KB total free (contiguous alloc fails even with enough
-                                            // total DMA). 55KB = 48KB crash floor + 7KB margin. Lower than
-                                            // ART_MIN_DMA_PRE_BURST (70KB) — lyrics HTTPS is smaller/faster than art.
+                                            // total DMA). 55KB = 48KB crash floor + 7KB margin.
+                                            // When lyrics fires at 55-70KB DMA, TLS consumes ~44KB → DMA dips to
+                                            // 11-26KB temporarily. Art task detects mutex held and waits for release
+                                            // (see ART_MIN_DMA_PRE_BURST note) rather than triggering WiFi stop.
                                             // Was hardcoded 30000 in lyrics.cpp: too low (AES fails at 44-48KB).
 #define ART_DMA_MID_READ_MIN         8000   // Abort if DMA < this DURING the chunk read loop. Belt-and-suspenders:
                                             // if WiFi dynamic RX buffers allocate ~15KB after dl-start passes, this
@@ -296,10 +297,10 @@
 #define LYRICS_ART_WAIT_TIMEOUT_MS  15000   // Max wait for art_download_in_progress to clear (storm cooldown 3000ms + download ~2000ms + margin)
 #define LYRICS_RETRY_DELAY_MS        2000   // Between lyrics HTTPS fetch retry attempts
 #define CLOCK_BG_MIN_DMA            64000   // Skip clockBgTask photo download if DMA below this.
-                                            // Same WiFi-ceiling constraint as ART_MIN_DMA_PRE_BURST: with WiFi
-                                            // connected, max DMA ≈ 68KB → 70KB threshold was unreachable → skip loop.
-                                            // TX crash confirmed at 57KB (log16) — 64KB = 7KB margin. Photo is
-                                            // non-critical (clock still shows, weather still fetches).
+                                            // TX crash confirmed at 57KB (log16) — 64KB = 7KB margin above crash floor.
+                                            // Photo is non-critical (clock still shows, weather still fetches).
+                                            // Unlike ART_MIN_DMA_PRE_BURST, NOT lowered: clockBgTask photo HTTP has
+                                            // larger burst (no SO_RCVBUF pre-connect path) so higher floor warranted.
 
 // =============================================================================
 // WATCHDOG & RELIABILITY

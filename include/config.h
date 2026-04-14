@@ -269,13 +269,17 @@
                                             // Crash scenario: dl-start 22KB > 16KB passes → mid-read check at 8KB
                                             // catches the WiFi-alloc drop → aborts before :928.
 #define ART_MIN_FREE_DMA             8000   // Referenced in boot memory map log only (not a download gate).
-#define ART_MIN_DMA_PRE_BURST       48000   // Min DMA before http.GET() (BEFORE burst arrives).
+#define ART_MIN_DMA_PRE_BURST       56000   // Min DMA before http.GET() (BEFORE burst arrives).
                                             // Observed burst: 13-22KB (server TCP cwnd limited; SO_RCVBUF does NOT
-                                            // limit initial burst on ESP32-P4/lwIP). Post-burst floor = 48-22 = 26KB >>
+                                            // limit initial burst on ESP32-P4/lwIP). Post-burst floor = 56-22 = 34KB >>
                                             // ART_TCP_RCVBUF_DL_SAFETY (16KB). WiFi-connected DMA ceiling ≈ 68KB →
-                                            // post-reconnect DMA ~63KB >> 48KB → art proceeds immediately after reconnect.
-                                            // Was 64000: set against 45KB pre-SO_RCVBUF burst (crash at 62KB→17KB).
-                                            // That burst scenario no longer occurs (observed burst now 13-22KB).
+                                            // post-reconnect DMA ~56-63KB ≥ 56KB → art proceeds after reconnect.
+                                            // Was 48000: too low — at depleted DMA 50-53KB + 500 storm, art proceeded
+                                            // and crashed :928 (log5: dma=53KB → :928 at 13:18:51; dma=51KB → :928 at
+                                            // 08:15:21). 56KB = above 500-storm DMA floor (~53KB) but ≤ post-reconnect
+                                            // DMA floor (~56-63KB) → still breaks the lyrics-TLS loop.
+                                            // Was 64000: set against 45KB pre-SO_RCVBUF burst. Lowered when burst
+                                            // dropped to 13-22KB, but 48KB was too aggressive.
                                             // NOTE: art abort path also checks network_mutex holder — if mutex held
                                             // (lyrics TLS active), abort is skipped and task waits for release instead
                                             // of triggering WiFi stop. See ui_album_art.cpp DMA abort block.

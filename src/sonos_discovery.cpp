@@ -363,7 +363,10 @@ void SonosController::getRoomName(SonosDevice* dev) {
         int start = xml.indexOf("<roomName>");
         int end = xml.indexOf("</roomName>");
         if (start > 0 && end > start) {
-            dev->roomName = xml.substring(start + 10, end);
+            // Decode XML entities (&apos;) and UTF-8 smart punctuation (e.g. U+2019
+            // curly apostrophe in "Raquel's Office") so they don't render as tofu in
+            // the ASCII-only Montserrat label font.
+            dev->roomName = decodeHTML(xml.substring(start + 10, end));
             Serial.printf("[SONOS]   Room name fetched successfully: '%s'\n", dev->roomName.c_str());
         } else {
             Serial.printf("[SONOS]   Failed to parse room name from XML for %s\n", dev->ip.toString().c_str());
@@ -451,10 +454,12 @@ bool SonosController::tryLoadCachedDevice() {
         return false;
     }
 
-    // Device is reachable - add it to the device list
+    // Device is reachable - add it to the device list.
+    // decodeHTML the cached name so legacy NVS values written before the discovery-side
+    // decode (with raw U+2019 / &apos; etc.) render cleanly on first boot after upgrade.
     deviceCount = 1;
     devices[0].ip = ip;
-    devices[0].roomName = cachedRoom;
+    devices[0].roomName = decodeHTML(cachedRoom);
     devices[0].rinconID = cachedRincon;
     devices[0].isPlaying = false;
     devices[0].volume = 50;

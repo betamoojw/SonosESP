@@ -120,9 +120,9 @@ Thanks to these wonderful people who have contributed to this project:
   <img src="https://contrib.rocks/image?repo=OpenSurface/SonosESP" />
 </a>
 
-Special thanks to:
-- **[@BaileyLawson](https://github.com/BaileyLawson)** - First external contributor!
-- **[@johnhenrick3-cpu](https://github.com/johnhenrick3-cpu)** - Outstanding community tester!
+- [@BaileyLawson](https://github.com/BaileyLawson)
+- [@johnhenrick3-cpu](https://github.com/johnhenrick3-cpu)
+- [@freeformz](https://github.com/freeformz)
 
 
 ## License

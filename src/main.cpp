@@ -13,9 +13,11 @@
 // Sonos logo
 LV_IMG_DECLARE(Sonos_idnu60bqes_1);
 
-static bool sonos_started = false;  // true once Sonos tasks are running
+static volatile bool sonos_started = false;  // true once Sonos tasks are running (written by deferred task, read by mainAppTask)
+static volatile bool deferred_discovery_running = false;  // guards the one-shot deferred discovery task (issue #69)
 static TaskHandle_t mainAppTaskHandle = nullptr;
-static void mainAppTask(void* param);  // forward declaration — defined after loop()
+static void mainAppTask(void* param);            // forward declaration — defined after loop()
+static void deferredDiscoveryTask(void* param);  // forward declaration — one-shot, runs off mainAppTask
 
 void setup() {
     Serial.begin(SERIAL_BAUD_RATE);
@@ -382,23 +384,39 @@ void checkWiFiReconnect() {
     if (WiFi.status() != WL_CONNECTED) {
         Serial.println("[WIFI] Connection lost, attempting reconnect...");
         WiFi.reconnect();
-    } else if (!sonos_started) {
-        // WiFi connected but Sonos not yet started (WiFi was down at boot)
-        // (Re)start NTP sync now that we have connectivity
-        configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-        setenv("TZ", CLOCK_ZONES[clock_tz_idx].posix, 1);
-        tzset();
-        Serial.println("[SONOS] WiFi now connected - attempting deferred discovery from cache");
-        bool loadedFromCache = sonos.tryLoadCachedDevice();
-        if (loadedFromCache) {
-            sonos.selectDevice(0);
-            sonos.startTasks();
-            sonos_started = true;
-            Serial.println("[SONOS] Deferred discovery succeeded from cache");
-        } else {
-            Serial.println("[SONOS] No cached device - use Devices screen to discover");
-        }
+    } else if (!sonos_started && !deferred_discovery_running) {
+        // WiFi connected but Sonos not yet started (WiFi was down at boot).
+        // tryLoadCachedDevice() does a blocking HTTP reachability GET (up to 5s). Running it
+        // here — on mainAppTask, the same thread as lv_timer_handler() — froze LVGL and blocked
+        // touch for the full timeout (issue #69). Hand it to a one-shot background task so the
+        // UI thread stays responsive. The 10s lastWifiCheck throttle + the guard flag ensure
+        // only one task is ever in flight; it retries on the next tick if discovery fails.
+        deferred_discovery_running = true;
+        xTaskCreatePinnedToCore(deferredDiscoveryTask, "DefDisc", 8192, NULL, 1, NULL, 1);
     }
+}
+
+// One-shot deferred Sonos init — runs off mainAppTask to avoid freezing touch (issue #69).
+// Pinned to internal SRAM (default xTaskCreate): tryLoadCachedDevice() reads NVS and
+// startTasks() may touch flash, both of which assert if the calling stack is in PSRAM.
+// Self-deletes when done; deferred_discovery_running gates re-entry.
+static void deferredDiscoveryTask(void* /*param*/) {
+    // (Re)start NTP sync now that we have connectivity
+    configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+    setenv("TZ", CLOCK_ZONES[clock_tz_idx].posix, 1);
+    tzset();
+    Serial.println("[SONOS] WiFi now connected - attempting deferred discovery from cache");
+    bool loadedFromCache = sonos.tryLoadCachedDevice();
+    if (loadedFromCache) {
+        sonos.selectDevice(0);
+        sonos.startTasks();
+        sonos_started = true;
+        Serial.println("[SONOS] Deferred discovery succeeded from cache");
+    } else {
+        Serial.println("[SONOS] No cached device - use Devices screen to discover");
+    }
+    deferred_discovery_running = false;
+    vTaskDelete(NULL);
 }
 
 // Periodic heap monitoring for debugging memory issues

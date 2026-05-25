@@ -588,7 +588,7 @@ void clockBgTask(void* /*param*/) {
                         if (code == HTTP_CODE_OK) {
                             WiFiClient* stream = photo_http.getStreamPtr();
                             uint32_t t0 = millis();
-                            while (dl_total < CLOCK_BG_MAX_DL_SIZE && !clock_bg_shutdown_requested) {
+                            while (stream && dl_total < CLOCK_BG_MAX_DL_SIZE && !clock_bg_shutdown_requested) {
                                 if (millis() - t0 > 20000) break;
                                 if (!stream->connected() && !stream->available()) break;
                                 int avail = stream->available();

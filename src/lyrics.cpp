@@ -458,12 +458,11 @@ bool requestLyrics(const String& artist, const String& title, int durationSec) {
         Serial.println("[LYRICS] Previous task still running — aborting, will retry next frame");
         lyrics_abort_requested = true;
         clearLyrics();  // Clear old song lyrics from display immediately
-        // Update pending params so the new task fetches the correct song when spawned
-        strncpy(pending_artist, artist.c_str(), sizeof(pending_artist) - 1);
-        pending_artist[sizeof(pending_artist) - 1] = '\0';
-        strncpy(pending_title, title.c_str(), sizeof(pending_title) - 1);
-        pending_title[sizeof(pending_title) - 1] = '\0';
-        pending_duration = durationSec;
+        // NOTE: do NOT write pending_artist/title here — the old task may still be
+        // reading them to build its URL (data race on the shared fixed buffers, H-3).
+        // The caller does not advance lyrics_last_track on a false return, so it calls
+        // again next frame; once the old task exits we copy the CURRENT song fresh in
+        // the spawn path below. Skipping the copy here costs nothing and removes the race.
         return false;  // Caller should NOT update lyrics_last_track; retry next frame
     }
 

@@ -165,6 +165,7 @@ public:
     int getDeviceCount() { return deviceCount; }
     SonosDevice* getDevice(int index);
     SonosDevice* getCurrentDevice();
+    SemaphoreHandle_t getDeviceMutex() { return deviceMutex; }  // CR-1: let UI snapshot device fields under the lock
     void selectDevice(int index);
     
     // Playback control (non-blocking, queued)

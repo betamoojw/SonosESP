@@ -39,7 +39,9 @@ void lv_mem_monitor_core(lv_mem_monitor_t* mon_p) {
     memset(mon_p, 0, sizeof(*mon_p));
     mon_p->free_size     = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     mon_p->total_size    = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
-    mon_p->used_pct      = (uint8_t)(100 - (mon_p->free_size * 100 / mon_p->total_size));
+    // Guard against divide-by-zero if PSRAM is somehow unregistered / not yet init.
+    mon_p->used_pct      = (mon_p->total_size == 0) ? 0
+                           : (uint8_t)(100 - (mon_p->free_size * 100 / mon_p->total_size));
     mon_p->frag_pct      = 0;
 }
 

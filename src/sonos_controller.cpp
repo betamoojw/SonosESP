@@ -638,8 +638,11 @@ bool SonosController::saveCurrentTrack(const char* playlistName) {
 
         String container = didlContent.substring(pos, endPos);
 
-        int idStart = container.indexOf("id=\"") + 4;
+        int idPos = container.indexOf("id=\"");
+        if (idPos < 0) { pos = endPos; continue; }  // malformed container — skip (M-5)
+        int idStart = idPos + 4;
         int idEnd = container.indexOf("\"", idStart);
+        if (idEnd < 0) { pos = endPos; continue; }
         String id = container.substring(idStart, idEnd);
 
         int titleStart = container.indexOf("<dc:title>") + 10;

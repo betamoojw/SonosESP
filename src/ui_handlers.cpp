@@ -1773,23 +1773,40 @@ void updateUI() {
 
     // Device is connected - update UI normally
 
+    // CR-1: snapshot the racy String fields under deviceMutex once, then read the locals
+    // below. The polling task reassigns these Strings under the same mutex; reading them
+    // lock-free risked a torn/dangling pointer → crash. Scalars (ints/bools) are atomic
+    // single-word reads and stay direct. No LVGL call is made while holding the lock.
+    String s_track, s_artist, s_album, s_room, s_relTime, s_repeat;
+    if (xSemaphoreTake(sonos.getDeviceMutex(), pdMS_TO_TICKS(30))) {
+        s_track   = d->currentTrack;
+        s_artist  = d->currentArtist;
+        s_album   = d->currentAlbum;
+        s_room    = d->roomName;
+        s_relTime = d->relTime;
+        s_repeat  = d->repeatMode;
+        xSemaphoreGive(sonos.getDeviceMutex());
+    } else {
+        return;  // polling is mid-write; skip this UI tick (retries in ~200ms)
+    }
+
     // Title
-    if (d->currentTrack != ui_title) {
-        lv_label_set_text(lbl_title, d->currentTrack.length() > 0 ? d->currentTrack.c_str() : "Not Playing");
-        ui_title = d->currentTrack;
+    if (s_track != ui_title) {
+        lv_label_set_text(lbl_title, s_track.length() > 0 ? s_track.c_str() : "Not Playing");
+        ui_title = s_track;
     }
 
     // Artist
-    if (d->currentArtist != ui_artist) {
-        lv_label_set_text(lbl_artist, d->currentArtist.c_str());
-        ui_artist = d->currentArtist;
+    if (s_artist != ui_artist) {
+        lv_label_set_text(lbl_artist, s_artist.c_str());
+        ui_artist = s_artist;
     }
 
     // Fetch synced lyrics when track changes
     // lyrics_last_track is a global (ui_globals.cpp) so clock exit can reset it to ""
     // forcing a re-fetch for the current track when returning from the clock screen.
-    String lyrics_key = d->currentArtist + "|" + d->currentTrack;
-    if (lyrics_key != lyrics_last_track && d->currentTrack.length() > 0) {
+    String lyrics_key = s_artist + "|" + s_track;
+    if (lyrics_key != lyrics_last_track && s_track.length() > 0) {
         last_track_change_ms = millis();
         if (lyrics_enabled && !d->isRadioStation && !d->isLineIn && !d->isTvAudio) {
             // Abort any running task FIRST. requestLyrics() checks artist.length()==0
@@ -1805,7 +1822,7 @@ void updateUI() {
             // frame until the old task exits and requestLyrics() can safely spawn.
             // This prevents TCB/stack reuse while the old task is alive, which would
             // permanently leak ~32KB of TLS DMA buffers per rapid track change.
-            if (requestLyrics(d->currentArtist, d->currentTrack, d->durationSeconds)) {
+            if (requestLyrics(s_artist, s_track, d->durationSeconds)) {
                 lyrics_last_track = lyrics_key;
             } else if (!lyrics_fetching) {
                 // Task not running and spawn failed (e.g. empty artist for podcast/audiobook,
@@ -1820,21 +1837,21 @@ void updateUI() {
 
     // Album name (below album art)
     static String ui_album_name = "";
-    if (d->currentAlbum != ui_album_name) {
-        lv_label_set_text(lbl_album, d->currentAlbum.c_str());
-        ui_album_name = d->currentAlbum;
+    if (s_album != ui_album_name) {
+        lv_label_set_text(lbl_album, s_album.c_str());
+        ui_album_name = s_album;
     }
 
     // Device name in header
     static String ui_device_name = "";
-    if (d->roomName != ui_device_name) {
-        String np = "Now Playing - " + d->roomName;
+    if (s_room != ui_device_name) {
+        String np = "Now Playing - " + s_room;
         lv_label_set_text(lbl_device_name, np.c_str());
-        ui_device_name = d->roomName;
+        ui_device_name = s_room;
     }
 
     // Time display
-    String t = d->relTime;
+    String t = s_relTime;
     if (t.startsWith("0:")) t = t.substring(2);
     lv_label_set_text(lbl_time, t.c_str());
 
@@ -1892,13 +1909,13 @@ void updateUI() {
     updateNextTrackUI(d);
 
     // Repeat
-    if (d->repeatMode != ui_repeat) {
+    if (s_repeat != ui_repeat) {
         lv_obj_t* lbl = lv_obj_get_child(btn_repeat, 0);
-        if (d->repeatMode == "ONE") {
+        if (s_repeat == "ONE") {
             lv_label_set_text(lbl, MDI_REPEAT_ONCE);
             lv_obj_set_style_text_font(lbl, &lv_font_mdi_32, 0);
             lv_obj_set_style_text_color(lbl, COL_ACCENT, 0);
-        } else if (d->repeatMode == "ALL") {
+        } else if (s_repeat == "ALL") {
             lv_label_set_text(lbl, MDI_REPEAT);
             lv_obj_set_style_text_font(lbl, &lv_font_mdi_32, 0);
             lv_obj_set_style_text_color(lbl, COL_ACCENT, 0);
@@ -1907,7 +1924,7 @@ void updateUI() {
             lv_obj_set_style_text_font(lbl, &lv_font_mdi_32, 0);
             lv_obj_set_style_text_color(lbl, COL_TEXT2, 0);
         }
-        ui_repeat = d->repeatMode;
+        ui_repeat = s_repeat;
     }
 
     // Album art - only request if URL changed to prevent download loops

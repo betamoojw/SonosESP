@@ -161,7 +161,6 @@ extern String latest_version;
 extern String download_url;
 extern int ota_channel;  // 0=Stable, 1=Nightly
 extern volatile bool ota_in_progress;  // Flag to skip non-essential tasks during OTA
-extern bool ota_auto_pending;          // Set on boot if device rebooted for OTA (low DMA)
 extern SemaphoreHandle_t ota_progress_mutex;  // Protects OTA progress updates and state
 
 // ============================================================================
@@ -225,7 +224,7 @@ void requestAlbumArt(const String &url);
 void clearAlbumArtCache();  // Invalidate LRU cache on track change
 void updateUI();
 void processUpdates();
-void triggerPendingOTA();  // Called from loop() when ota_auto_pending is set
+void triggerPendingOTA();  // Called from setup() if NVS_KEY_OTA_PENDING was saved before reboot — runs OTA at boot before background tasks start (full DMA headroom)
 String urlEncode(const char *url);
 void cleanupBrowseData(lv_obj_t *list);
 lv_obj_t *createSettingsSidebar(lv_obj_t *screen, int activeIdx);
@@ -248,9 +247,6 @@ extern StaticTask_t albumArtTaskTCB;
 extern StackType_t* art_task_stack;
 extern volatile bool art_shutdown_requested;
 extern volatile bool art_abort_download;
-extern volatile bool art_suppress_source_change;  // Suppress intermediate art triggers during queue-select Seek→Play
-extern volatile bool cmd_queue_in_progress;        // CMD_PLAY_QUEUE_ITEM active — suppress all polling from drain through settle
-extern unsigned long last_cmd_queue_play_ms;       // Timestamp when CMD_PLAY_QUEUE_ITEM last cleared flags
 void albumArtTask(void *param);
 void createArtTask();   // PSRAM-stack wrapper — use instead of xTaskCreatePinnedToCore directly
 

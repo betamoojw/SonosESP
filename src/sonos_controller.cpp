@@ -1654,9 +1654,11 @@ void SonosController::pollingTaskFunction(void* param) {
                 }
             }
             // ── SDIO early-exit guard ─────────────────────────────────────────────
+            // 500-storm early-exit was removed (caused SDIO idle → DMA clock-gate);
+            // 500 protection is handled by the inside-mutex 200ms post-500 drain in art,
+            // art_download_in_progress suppression during downloads, and the post-SOAP-1
+            // (in_500_now) guard skipping updatePlaybackState below.
             {
-                bool in_500_storm   = last_transient_500_ms > 0 &&
-                                      millis() - last_transient_500_ms < (SDIO_STORM_COOLDOWN_MS + SDIO_POST_STORM_SETTLE_MS);
                 bool post_download  = last_art_download_end_ms > 0 &&
                                       millis() - last_art_download_end_ms < SDIO_INTER_DOWNLOAD_MS;
                 bool track_settling = last_track_change_ms > 0 &&
@@ -1673,19 +1675,6 @@ void SonosController::pollingTaskFunction(void* param) {
                     vTaskDelay(pdMS_TO_TICKS(track_settling ? 1000 : POLL_BASE_INTERVAL_MS));
                     continue;
                 }
-
-                // NOTE: in_500_storm early-exit REMOVED.
-                // Sleeping 1000ms during 500-storm caused SDIO idle → C6 DMA clock-gate →
-                // pkt_rxbuff overflow when art download started (intermittent :928 crash).
-                // The protection it provided (preventing SOAP FIN-ACKs from competing with
-                // art burst) is already handled by:
-                //   (a) art inside-mutex post-500 drain (SDIO_TCP_CLOSE_MS = 200ms)
-                //   (b) art_download_in_progress=true blocking polling during actual download
-                //   (c) post-SOAP-1 guard (in_500_now) skipping updatePlaybackState
-                // Polling now fires at normal rate during 500-storm, keeping SDIO warm.
-                // One SOAP per 300ms cycle (only updateTrackInfo fires; post-SOAP-1 guard
-                // blocks updatePlaybackState when in_500_now=true). Harmless traffic.
-                (void)in_500_storm;
             }
             // ─────────────────────────────────────────────────────────────────────
 

@@ -37,12 +37,6 @@
 #define SDIO_WAIT_QUEUE_POLL     0x04u   // Gate on last_queue_fetch_time
 #define SDIO_WAIT_HTTPS_COOLDOWN 0x08u   // Gate on last_https_end_ms (3s TLS teardown wait)
 
-// Art task: all four guards. Storm gate waits for HLS transition to clear — Sonos
-// WiFi broadcast traffic during transitions + simultaneous large HTTP download
-// exhausts C6 pkt_rxbuff. WiFi.setSleep(false) makes the 3s wait safe (no power-save).
-#define SDIO_WAIT_ART  (SDIO_WAIT_TRACK_CHANGE | SDIO_WAIT_STORM_GATE | \
-                        SDIO_WAIT_QUEUE_POLL | SDIO_WAIT_HTTPS_COOLDOWN)
-
 bool sdioPreWait(const char*    tag,
                  uint32_t       flags       = 0,
                  volatile bool* abort_flag1 = nullptr,

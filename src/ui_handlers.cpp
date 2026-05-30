@@ -1375,7 +1375,7 @@ void ev_install_update(lv_event_t* e) {
     ESP.restart();
 }
 
-// Called from loop() when ota_auto_pending is set (device rebooted for OTA due to low DMA).
+// Called from setup() if NVS_KEY_OTA_PENDING was saved before the previous reboot.
 // Uses the URL saved before reboot - skips checkForUpdates() entirely so no HTTPS session
 // consumes DMA before the OTA TLS handshake. This breaks the reboot loop.
 void triggerPendingOTA() {

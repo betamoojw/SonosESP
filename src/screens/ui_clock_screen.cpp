@@ -948,18 +948,16 @@ void checkClockTrigger() {
                     uint32_t inact_ms  = (uint32_t)clock_timeout_min * 60000UL;
                     uint32_t since_exit  = millis() - last_clock_exit_ms;
                     uint32_t since_touch = millis() - last_touch_time;
-                    uint32_t since_trk   = last_track_change_ms ? millis() - last_track_change_ms : 999999;
                     bool trig = (clock_mode == CLOCK_MODE_INACTIVITY) ? true
                               : (clock_mode == CLOCK_MODE_PAUSED)     ? !ui_playing
                               : (clock_mode == CLOCK_MODE_NOTHING)    ? (!ui_playing && ui_title.isEmpty())
                               : false;
-                    Serial.printf("[CLOCK DBG] mode=%d timeout=%dmin | exit_ok=%d(+%lus) disabled=%d inact_ok=%d(%lu/%lus) trig=%d settle_ok=%d(+%lus) playing=%d art_dl=%d title='%s'\n",
+                    Serial.printf("[CLOCK DBG] mode=%d timeout=%dmin | exit_ok=%d(+%lus) disabled=%d inact_ok=%d(%lu/%lus) trig=%d playing=%d art_dl=%d title='%s'\n",
                         clock_mode, clock_timeout_min,
                         (since_exit >= CLOCK_EXIT_COOLDOWN_MS),  since_exit/1000,
                         (clock_mode == CLOCK_MODE_DISABLED),
                         (since_touch >= inact_ms),               since_touch/1000, inact_ms/1000,
                         trig,
-                        (since_trk >= SDIO_TRACK_CHANGE_SETTLE_MS), since_trk/1000,
                         ui_playing, (int)art_download_in_progress, ui_title.c_str());
                 }
             }

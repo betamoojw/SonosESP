@@ -270,5 +270,4 @@ String latest_version = "";
 String download_url = "";
 int ota_channel = 0;  // 0=Stable, 1=Nightly
 volatile bool ota_in_progress = false;  // Flag to skip non-essential tasks during OTA
-bool ota_auto_pending = false;          // Set on boot if NVS_KEY_OTA_PENDING was saved before reboot
 SemaphoreHandle_t ota_progress_mutex = NULL;  // Created in main.cpp

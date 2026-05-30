@@ -259,11 +259,13 @@ extern int  clock_weather_city_idx;  // Index into CLOCK_CITIES[], OR == CLOCK_C
 extern bool clock_wx_fahrenheit;     // true = display temps in °F
 
 // Custom location override (issue #74) — used when clock_weather_city_idx == CLOCK_LOC_CUSTOM_IDX.
-// Stored as Strings so "unset" is distinguishable from "0.0,0.0" (off the coast of Ghana).
-extern String clock_custom_lat;
-extern String clock_custom_lon;
-extern String clock_custom_name;
-// Sentinel index that means "use custom_lat/lon/name" instead of CLOCK_CITIES[idx]
+// Stored as `volatile float` (32-bit aligned = atomic single-word read on RISC-V) so the bg task
+// can read them without a mutex / without going through NVS (NVS reads from a PSRAM-stacked task
+// crash on the cache-disable assert — see ui_clock_screen.cpp fetchClockWeather custom branch).
+// Sentinel value 0.0f = unset (lat/lon = exactly 0.0 is off the coast of Ghana — acceptable).
+extern volatile float clock_custom_lat;
+extern volatile float clock_custom_lon;
+// Sentinel index that means "use custom_lat/lon" instead of CLOCK_CITIES[idx]
 #define CLOCK_LOC_CUSTOM_IDX  CLOCK_CITY_COUNT
 
 // Weather data — written by bg task, read by UI tick (flag guards LVGL calls)

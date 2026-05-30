@@ -5,10 +5,18 @@
  * for visual hierarchy and easier scanning vs the previous flat list. Same NVS
  * keys, same callbacks — no behavior change for existing settings.
  *
- * Adds optional manual location override (issue #74): the Weather card includes
- * a "Custom location..." entry in the city dropdown that reveals lat/lon/name
- * input fields. Saves to NVS on defocus; fetchClockWeather() reads from NVS to
- * stay race-free with the bg task.
+ * Adds optional manual location override (issue #74) via a 3-option method
+ * dropdown inside the Weather card:
+ *   - Auto-detect from IP
+ *   - Predefined city  (reveals the existing city list as a sub-dropdown)
+ *   - Custom coordinates  (reveals lat/lon textareas)
+ * Method is encoded in the existing clock_weather_city_idx — 0 = Auto,
+ * 1..CLOCK_CITY_COUNT-1 = predefined, CLOCK_LOC_CUSTOM_IDX = custom.
+ *
+ * Coords are written to NVS by the main thread only; fetchClockWeather() reads
+ * the atomic float globals (clock_custom_lat/lon) — never touches NVS itself,
+ * since clockBgTask has a PSRAM stack which would crash on the cache-disable
+ * assert during a flash op.
  */
 
 #include "ui_common.h"
@@ -25,10 +33,17 @@ lv_obj_t* createSettingsSidebar(lv_obj_t* screen, int activeIdx);
 #define CLK_CARD_BORDER lv_color_hex(0x2A2A2A)
 #define CLK_INPUT_BG    lv_color_hex(0x222222)
 #define CLK_INPUT_BORD  lv_color_hex(0x3A3A3A)
+#define CLK_KB_BG       lv_color_hex(0x1A1A1A)
+#define CLK_KB_KEY      lv_color_hex(0x2A2A2A)
+#define CLK_KB_KEY_BORD lv_color_hex(0x3A3A3A)
+
+// Location method indices (UI-level — derived from clock_weather_city_idx)
+#define LOC_METHOD_AUTO    0
+#define LOC_METHOD_CITY    1
+#define LOC_METHOD_CUSTOM  2
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper — create a card container with a title + accent underline.
-// Returns the card object; controls added inside it stack via flex column.
 // ─────────────────────────────────────────────────────────────────────────────
 static lv_obj_t* addCard(lv_obj_t* parent, const char* title) {
     lv_obj_t* card = lv_obj_create(parent);
@@ -51,7 +66,6 @@ static lv_obj_t* addCard(lv_obj_t* parent, const char* title) {
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(lbl, COL_TEXT, 0);
 
-    // Accent underline strip under the title
     lv_obj_t* underline = lv_obj_create(card);
     lv_obj_set_size(underline, 36, 2);
     lv_obj_set_style_bg_color(underline, COL_ACCENT, 0);
@@ -159,58 +173,109 @@ static lv_obj_t* makeTextarea(lv_obj_t* parent, const char* initial,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Custom location sub-card — state shared between dropdown + textarea callbacks
+// Location method UI — state shared across callbacks
 // ─────────────────────────────────────────────────────────────────────────────
-static lv_obj_t* custom_loc_card = nullptr;
-static lv_obj_t* custom_lat_ta   = nullptr;
-static lv_obj_t* custom_lon_ta   = nullptr;
-static lv_obj_t* custom_name_ta  = nullptr;
-static lv_obj_t* custom_kb       = nullptr;
+static lv_obj_t* city_sub_container  = nullptr;  // wraps "City" label + dropdown
+static lv_obj_t* dd_city             = nullptr;
+static lv_obj_t* custom_loc_card     = nullptr;
+static lv_obj_t* custom_lat_ta       = nullptr;
+static lv_obj_t* custom_lon_ta       = nullptr;
+static lv_obj_t* custom_kb           = nullptr;
+static lv_obj_t* settings_scrollable = nullptr;  // content area returned by sidebar — used for scroll-into-view
 
-// Show/hide sub-card based on city dropdown selection.
-static void update_custom_loc_visibility(int city_idx) {
-    if (!custom_loc_card) return;
-    if (city_idx == CLOCK_LOC_CUSTOM_IDX) {
-        lv_obj_clear_flag(custom_loc_card, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(custom_loc_card, LV_OBJ_FLAG_HIDDEN);
-        if (custom_kb) lv_obj_add_flag(custom_kb, LV_OBJ_FLAG_HIDDEN);
+// Show/hide the sub-controls based on the selected method.
+static void update_location_method_visibility(int method) {
+    if (city_sub_container) {
+        if (method == LOC_METHOD_CITY) lv_obj_clear_flag(city_sub_container, LV_OBJ_FLAG_HIDDEN);
+        else                            lv_obj_add_flag(city_sub_container,  LV_OBJ_FLAG_HIDDEN);
+    }
+    if (custom_loc_card) {
+        if (method == LOC_METHOD_CUSTOM) lv_obj_clear_flag(custom_loc_card, LV_OBJ_FLAG_HIDDEN);
+        else                              lv_obj_add_flag(custom_loc_card,  LV_OBJ_FLAG_HIDDEN);
+    }
+    if (method != LOC_METHOD_CUSTOM && custom_kb) {
+        lv_obj_add_flag(custom_kb, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
-// Persist current textarea contents to NVS + globals. Called on DEFOCUS.
+// Persist current textarea contents (called on DEFOCUS).
 static void persist_custom_loc_from_textareas() {
-    if (!custom_lat_ta || !custom_lon_ta || !custom_name_ta) return;
-    const char* lat_s  = lv_textarea_get_text(custom_lat_ta);
-    const char* lon_s  = lv_textarea_get_text(custom_lon_ta);
-    const char* name_s = lv_textarea_get_text(custom_name_ta);
-    clock_custom_lat  = lat_s;
-    clock_custom_lon  = lon_s;
-    clock_custom_name = name_s;
-    wifiPrefs.putString(NVS_KEY_CLOCK_WX_CUSTOM_LAT,  lat_s);
-    wifiPrefs.putString(NVS_KEY_CLOCK_WX_CUSTOM_LON,  lon_s);
-    wifiPrefs.putString(NVS_KEY_CLOCK_WX_CUSTOM_NAME, name_s);
-    clock_wx_valid = false;                  // force the bg task to re-render with new city
-    clock_weather_needs_refetch = true;      // bg task picks this up next loop tick
-    Serial.printf("[CLOCK] Custom location saved: %s, %s (%s)\n", lat_s, lon_s, name_s);
+    if (!custom_lat_ta || !custom_lon_ta) return;
+    const char* lat_s = lv_textarea_get_text(custom_lat_ta);
+    const char* lon_s = lv_textarea_get_text(custom_lon_ta);
+    // Update atomic floats first (read lock-free by bg task)
+    clock_custom_lat = (float)atof(lat_s);
+    clock_custom_lon = (float)atof(lon_s);
+    // Persist text form to NVS (mainAppTask = internal SRAM stack, NVS-safe)
+    wifiPrefs.putString(NVS_KEY_CLOCK_WX_CUSTOM_LAT, lat_s);
+    wifiPrefs.putString(NVS_KEY_CLOCK_WX_CUSTOM_LON, lon_s);
+    clock_wx_valid = false;
+    clock_weather_needs_refetch = true;
+    Serial.printf("[CLOCK] Custom location saved: %.4f, %.4f\n",
+                  (double)clock_custom_lat, (double)clock_custom_lon);
 }
 
-// Focus / defocus handler for the three custom-coords textareas.
+// Sum the Y coords from `obj` up the parent chain until (but not including) `ancestor`.
+static int relative_y_to(lv_obj_t* obj, lv_obj_t* ancestor) {
+    int y = 0;
+    lv_obj_t* o = obj;
+    while (o && o != ancestor) {
+        y += lv_obj_get_y(o);
+        o = lv_obj_get_parent(o);
+    }
+    return y;
+}
+
+// Focus / defocus handler for the custom-coords textareas.
 static void custom_ta_event_cb(lv_event_t* e) {
     lv_event_code_t code = lv_event_get_code(e);
     lv_obj_t* ta = (lv_obj_t*)lv_event_get_target(e);
     if (!custom_kb) return;
     if (code == LV_EVENT_FOCUSED) {
-        bool is_name = (ta == custom_name_ta);
-        lv_keyboard_set_mode(custom_kb,
-            is_name ? LV_KEYBOARD_MODE_TEXT_LOWER : LV_KEYBOARD_MODE_NUMBER);
+        lv_keyboard_set_mode(custom_kb, LV_KEYBOARD_MODE_NUMBER);
         lv_keyboard_set_textarea(custom_kb, ta);
         lv_obj_clear_flag(custom_kb, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_scroll_to_view(ta, LV_ANIM_ON);  // bring the field above the keyboard
+        lv_obj_move_foreground(custom_kb);  // ensure keyboard renders above content
+
+        // Scroll the focused textarea above the keyboard.
+        // The keyboard covers the bottom 220px (480 - 220 = 260 visible top).
+        // Aim for the textarea to land ~40px from the top of the visible area.
+        if (settings_scrollable) {
+            int ta_y = relative_y_to(ta, settings_scrollable);
+            int target = ta_y - 40;
+            if (target < 0) target = 0;
+            lv_obj_scroll_to_y(settings_scrollable, target, LV_ANIM_ON);
+        }
     } else if (code == LV_EVENT_DEFOCUSED) {
         persist_custom_loc_from_textareas();
         lv_obj_add_flag(custom_kb, LV_OBJ_FLAG_HIDDEN);
     }
+}
+
+// Apply dark-mode styling to the keyboard.
+static void style_keyboard_dark(lv_obj_t* kb) {
+    // Main background
+    lv_obj_set_style_bg_color(kb, CLK_KB_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(kb, CLK_CARD_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(kb, 1, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(kb, 4, LV_PART_MAIN);
+    lv_obj_set_style_radius(kb, 0, LV_PART_MAIN);
+
+    // Key buttons
+    lv_obj_set_style_bg_color(kb, CLK_KB_KEY, LV_PART_ITEMS);
+    lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, LV_PART_ITEMS);
+    lv_obj_set_style_text_color(kb, COL_TEXT, LV_PART_ITEMS);
+    lv_obj_set_style_text_font(kb, &lv_font_montserrat_16, LV_PART_ITEMS);
+    lv_obj_set_style_border_color(kb, CLK_KB_KEY_BORD, LV_PART_ITEMS);
+    lv_obj_set_style_border_width(kb, 1, LV_PART_ITEMS);
+    lv_obj_set_style_radius(kb, 6, LV_PART_ITEMS);
+
+    // Pressed-key feedback
+    lv_obj_set_style_bg_color(kb, COL_ACCENT,
+        (lv_style_selector_t)((uint32_t)LV_PART_ITEMS | (uint32_t)LV_STATE_PRESSED));
+    lv_obj_set_style_text_color(kb, lv_color_hex(0x000000),
+        (lv_style_selector_t)((uint32_t)LV_PART_ITEMS | (uint32_t)LV_STATE_PRESSED));
 }
 
 // ============================================================================
@@ -226,6 +291,7 @@ void createClockSettingsScreen() {
     lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_set_style_pad_row(content, 0, 0);
+    settings_scrollable = content;  // remember for scroll-into-view on keyboard focus
 
     // ── Screen title ─────────────────────────────────────────────────────────
     lv_obj_t* lbl_title = lv_label_create(content);
@@ -356,7 +422,7 @@ void createClockSettingsScreen() {
     }
 
     // ────────────────────────────────────────────────────────────────────────
-    // CARD 4 — Weather (+ Custom location sub-card per issue #74)
+    // CARD 4 — Weather  (with method dropdown + reveal panels per #74)
     // ────────────────────────────────────────────────────────────────────────
     {
         lv_obj_t* card = addCard(content, "Weather");
@@ -370,31 +436,59 @@ void createClockSettingsScreen() {
             wifiPrefs.putBool(NVS_KEY_CLOCK_WEATHER_EN, clock_weather_enabled);
         }, LV_EVENT_VALUE_CHANGED, NULL);
 
-        addSettingLabel(card, "Location");
-        addDescLabel(card, "Auto-detect uses your public IP. Pick \"Custom location\" to enter your own coordinates.");
+        // ── Location method dropdown ─────────────────────────────────────────
+        addSettingLabel(card, "Location method");
+        addDescLabel(card, "Auto-detect uses your public IP. Pick a city or enter your own coordinates.");
 
-        // Build city dropdown: predefined cities + "Custom location..." appended at the end.
-        // CLOCK_LOC_CUSTOM_IDX == CLOCK_CITY_COUNT, so the appended entry is exactly at that index.
+        // Derive initial method from saved city_idx
+        int initial_method = LOC_METHOD_AUTO;
+        if (clock_weather_city_idx == CLOCK_LOC_CUSTOM_IDX) {
+            initial_method = LOC_METHOD_CUSTOM;
+        } else if (clock_weather_city_idx >= 1 && clock_weather_city_idx < CLOCK_CITY_COUNT) {
+            initial_method = LOC_METHOD_CITY;
+        }
+
+        lv_obj_t* dd_method = makeDropdown(card,
+            "Auto-detect from IP\n"
+            "Predefined city\n"
+            "Custom coordinates",
+            (uint16_t)initial_method, false);
+
+        // ── City sub-container (label + dropdown), hidden unless method == CITY ──
+        city_sub_container = lv_obj_create(card);
+        lv_obj_set_width(city_sub_container, lv_pct(100));
+        lv_obj_set_height(city_sub_container, LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_opa(city_sub_container, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(city_sub_container, 0, 0);
+        lv_obj_set_style_pad_all(city_sub_container, 0, 0);
+        lv_obj_set_style_pad_row(city_sub_container, 4, 0);
+        lv_obj_set_flex_flow(city_sub_container, LV_FLEX_FLOW_COLUMN);
+        lv_obj_clear_flag(city_sub_container, LV_OBJ_FLAG_SCROLLABLE);
+
+        addSettingLabel(city_sub_container, "City");
+        // Build the city list — predefined entries only (skip CLOCK_CITIES[0] which is Auto).
         static char city_opts[2048];
         city_opts[0] = '\0';
-        for (int i = 0; i < CLOCK_CITY_COUNT; i++) {
+        for (int i = 1; i < CLOCK_CITY_COUNT; i++) {
             strncat(city_opts, CLOCK_CITIES[i].label, sizeof(city_opts) - strlen(city_opts) - 2);
-            strncat(city_opts, "\n", sizeof(city_opts) - strlen(city_opts) - 1);
+            if (i < CLOCK_CITY_COUNT - 1)
+                strncat(city_opts, "\n", sizeof(city_opts) - strlen(city_opts) - 1);
         }
-        strncat(city_opts, "Custom location...", sizeof(city_opts) - strlen(city_opts) - 1);
-
-        lv_obj_t* dd_city = makeDropdown(card, city_opts, (uint16_t)clock_weather_city_idx, true);
+        // Map saved idx → dropdown idx (saved 1..N-1 ⇒ dropdown 0..N-2; else 0)
+        uint16_t city_dd_initial = (initial_method == LOC_METHOD_CITY)
+                                   ? (uint16_t)(clock_weather_city_idx - 1)
+                                   : 0;
+        dd_city = makeDropdown(city_sub_container, city_opts, city_dd_initial, true);
         lv_obj_add_event_cb(dd_city, [](lv_event_t* e) {
             lv_obj_t* dd = (lv_obj_t*)lv_event_get_target(e);
-            clock_weather_city_idx = (int)lv_dropdown_get_selected(dd);
+            // Predefined city sub-dropdown is 0-indexed over [1..CLOCK_CITY_COUNT-1]
+            clock_weather_city_idx = (int)lv_dropdown_get_selected(dd) + 1;
             wifiPrefs.putInt(NVS_KEY_CLOCK_WEATHER_CITY, clock_weather_city_idx);
             clock_wx_valid = false;
             clock_weather_needs_refetch = true;
-            update_custom_loc_visibility(clock_weather_city_idx);
         }, LV_EVENT_VALUE_CHANGED, NULL);
 
-        // ── Custom location sub-card (issue #74) ─────────────────────────────
-        // Lives inside the Weather card; hidden unless the user picks Custom.
+        // ── Custom coords sub-card, hidden unless method == CUSTOM ──────────
         custom_loc_card = lv_obj_create(card);
         lv_obj_set_width(custom_loc_card, lv_pct(100));
         lv_obj_set_height(custom_loc_card, LV_SIZE_CONTENT);
@@ -405,7 +499,7 @@ void createClockSettingsScreen() {
         lv_obj_set_style_border_width(custom_loc_card, 1, 0);
         lv_obj_set_style_pad_all(custom_loc_card, 12, 0);
         lv_obj_set_style_pad_row(custom_loc_card, 6, 0);
-        lv_obj_set_style_margin_top(custom_loc_card, 8, 0);
+        lv_obj_set_style_margin_top(custom_loc_card, 6, 0);
         lv_obj_set_flex_flow(custom_loc_card, LV_FLEX_FLOW_COLUMN);
         lv_obj_clear_flag(custom_loc_card, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -415,28 +509,52 @@ void createClockSettingsScreen() {
         lv_obj_set_style_text_color(sub_title, COL_ACCENT, 0);
 
         addSettingLabel(custom_loc_card, "Latitude (-90 to 90)");
+        // Initialize from atomic float; format with 4 decimal places
+        char lat_init[16] = "";
+        if (clock_custom_lat != 0.0f || clock_custom_lon != 0.0f) {
+            snprintf(lat_init, sizeof(lat_init), "%.4f", (double)clock_custom_lat);
+        }
         custom_lat_ta = makeTextarea(custom_loc_card,
-            clock_custom_lat.c_str(), "0123456789.-", 12, "e.g. 45.5017");
+            lat_init, "0123456789.-", 12, "e.g. 45.5017");
         lv_obj_add_event_cb(custom_lat_ta, custom_ta_event_cb, LV_EVENT_FOCUSED,   NULL);
         lv_obj_add_event_cb(custom_lat_ta, custom_ta_event_cb, LV_EVENT_DEFOCUSED, NULL);
 
         addSettingLabel(custom_loc_card, "Longitude (-180 to 180)");
+        char lon_init[16] = "";
+        if (clock_custom_lat != 0.0f || clock_custom_lon != 0.0f) {
+            snprintf(lon_init, sizeof(lon_init), "%.4f", (double)clock_custom_lon);
+        }
         custom_lon_ta = makeTextarea(custom_loc_card,
-            clock_custom_lon.c_str(), "0123456789.-", 12, "e.g. -73.5673");
+            lon_init, "0123456789.-", 12, "e.g. -73.5673");
         lv_obj_add_event_cb(custom_lon_ta, custom_ta_event_cb, LV_EVENT_FOCUSED,   NULL);
         lv_obj_add_event_cb(custom_lon_ta, custom_ta_event_cb, LV_EVENT_DEFOCUSED, NULL);
-
-        addSettingLabel(custom_loc_card, "City name (display only)");
-        custom_name_ta = makeTextarea(custom_loc_card,
-            clock_custom_name.c_str(), nullptr, 60, "e.g. Montreal");
-        lv_obj_add_event_cb(custom_name_ta, custom_ta_event_cb, LV_EVENT_FOCUSED,   NULL);
-        lv_obj_add_event_cb(custom_name_ta, custom_ta_event_cb, LV_EVENT_DEFOCUSED, NULL);
 
         addDescLabel(custom_loc_card,
             "Saved automatically when you tap outside the field. Get coordinates from any map app.");
 
-        // Apply initial visibility based on the current saved selection
-        update_custom_loc_visibility(clock_weather_city_idx);
+        // ── Method dropdown handler (after city/custom panels exist) ────────
+        lv_obj_add_event_cb(dd_method, [](lv_event_t* e) {
+            lv_obj_t* dd = (lv_obj_t*)lv_event_get_target(e);
+            int method = (int)lv_dropdown_get_selected(dd);
+            if (method == LOC_METHOD_AUTO) {
+                clock_weather_city_idx = 0;
+            } else if (method == LOC_METHOD_CITY) {
+                // If we were on Auto or Custom, default to the first predefined city.
+                if (clock_weather_city_idx == 0 || clock_weather_city_idx == CLOCK_LOC_CUSTOM_IDX) {
+                    clock_weather_city_idx = 1;
+                    if (dd_city) lv_dropdown_set_selected(dd_city, 0);
+                }
+            } else /* LOC_METHOD_CUSTOM */ {
+                clock_weather_city_idx = CLOCK_LOC_CUSTOM_IDX;
+            }
+            wifiPrefs.putInt(NVS_KEY_CLOCK_WEATHER_CITY, clock_weather_city_idx);
+            clock_wx_valid = false;
+            clock_weather_needs_refetch = true;
+            update_location_method_visibility(method);
+        }, LV_EVENT_VALUE_CHANGED, NULL);
+
+        // Apply initial visibility
+        update_location_method_visibility(initial_method);
 
         // ── Temperature unit ────────────────────────────────────────────────
         addSettingLabel(card, "Temperature unit");
@@ -450,12 +568,11 @@ void createClockSettingsScreen() {
         }, LV_EVENT_VALUE_CHANGED, NULL);
     }
 
-    // ─── Floating numeric/text keyboard ─────────────────────────────────────
-    // Created at screen level so it overlays content. Hidden until a custom-
-    // coords textarea is focused; the focus event-cb wires textarea+mode.
+    // ─── Floating numeric keyboard (dark-styled) ────────────────────────────
     custom_kb = lv_keyboard_create(scr_clock_settings);
     lv_obj_set_size(custom_kb, lv_pct(100), 220);
     lv_obj_align(custom_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_add_flag(custom_kb, LV_OBJ_FLAG_HIDDEN);
     lv_keyboard_set_mode(custom_kb, LV_KEYBOARD_MODE_NUMBER);
+    style_keyboard_dark(custom_kb);
 }

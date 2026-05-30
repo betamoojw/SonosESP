@@ -22,15 +22,15 @@
 #include "ui_common.h"
 #include "config.h"
 #include "clock_screen.h"
+#include "ui_settings_card.h"  // shared card helpers: addCard, addSettingLabel, addDescLabel, addSwitch
 
 // Forward declaration (defined in ui_sidebar.cpp)
 lv_obj_t* createSettingsSidebar(lv_obj_t* screen, int activeIdx);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Local theme tokens (slightly elevated from screen bg = 0x121212)
+// Clock-specific theme tokens (form inputs + keyboard, not in the shared header
+// because only this screen uses them so far)
 // ─────────────────────────────────────────────────────────────────────────────
-#define CLK_CARD_BG     lv_color_hex(0x1A1A1A)
-#define CLK_CARD_BORDER lv_color_hex(0x2A2A2A)
 #define CLK_INPUT_BG    lv_color_hex(0x222222)
 #define CLK_INPUT_BORD  lv_color_hex(0x3A3A3A)
 #define CLK_KB_BG       lv_color_hex(0x1A1A1A)
@@ -41,77 +41,6 @@ lv_obj_t* createSettingsSidebar(lv_obj_t* screen, int activeIdx);
 #define LOC_METHOD_AUTO    0
 #define LOC_METHOD_CITY    1
 #define LOC_METHOD_CUSTOM  2
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helper — create a card container with a title + accent underline.
-// ─────────────────────────────────────────────────────────────────────────────
-static lv_obj_t* addCard(lv_obj_t* parent, const char* title) {
-    lv_obj_t* card = lv_obj_create(parent);
-    lv_obj_set_width(card, lv_pct(100));
-    lv_obj_set_height(card, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_color(card, CLK_CARD_BG, 0);
-    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(card, 14, 0);
-    lv_obj_set_style_border_color(card, CLK_CARD_BORDER, 0);
-    lv_obj_set_style_border_width(card, 1, 0);
-    lv_obj_set_style_pad_all(card, 16, 0);
-    lv_obj_set_style_pad_row(card, 8, 0);
-    lv_obj_set_style_margin_bottom(card, 14, 0);
-    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t* lbl = lv_label_create(card);
-    lv_label_set_text(lbl, title);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(lbl, COL_TEXT, 0);
-
-    lv_obj_t* underline = lv_obj_create(card);
-    lv_obj_set_size(underline, 36, 2);
-    lv_obj_set_style_bg_color(underline, COL_ACCENT, 0);
-    lv_obj_set_style_bg_opa(underline, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(underline, 1, 0);
-    lv_obj_set_style_border_width(underline, 0, 0);
-    lv_obj_set_style_margin_bottom(underline, 4, 0);
-    lv_obj_clear_flag(underline, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(underline, LV_OBJ_FLAG_CLICKABLE);
-
-    return card;
-}
-
-static void addSettingLabel(lv_obj_t* parent, const char* text) {
-    lv_obj_t* lbl = lv_label_create(parent);
-    lv_label_set_text(lbl, text);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lbl, COL_TEXT, 0);
-    lv_obj_set_style_pad_top(lbl, 6, 0);
-}
-
-static void addDescLabel(lv_obj_t* parent, const char* text) {
-    lv_obj_t* lbl = lv_label_create(parent);
-    lv_label_set_text(lbl, text);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lbl, COL_TEXT2, 0);
-    lv_obj_set_width(lbl, lv_pct(100));
-    lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
-}
-
-static lv_obj_t* addSwitch(lv_obj_t* parent, bool initial) {
-    lv_obj_t* sw = lv_switch_create(parent);
-    lv_obj_set_size(sw, 50, 26);
-    lv_obj_set_style_margin_top(sw, 4, 0);
-    lv_obj_set_style_radius(sw, 13, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(sw, lv_color_hex(0x333333), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(sw, COL_ACCENT,
-        (lv_style_selector_t)((uint32_t)LV_PART_INDICATOR | (uint32_t)LV_STATE_CHECKED));
-    lv_obj_set_style_radius(sw, 13, LV_PART_INDICATOR);
-    lv_obj_set_style_pad_all(sw, 0, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(sw, COL_TEXT, LV_PART_KNOB);
-    lv_obj_set_style_radius(sw, 11, LV_PART_KNOB);
-    lv_obj_set_style_pad_all(sw, -3, LV_PART_KNOB);
-    if (initial) lv_obj_add_state(sw, LV_STATE_CHECKED);
-    return sw;
-}
 
 static lv_obj_t* makeDropdown(lv_obj_t* parent, const char* options,
                               uint16_t selected, bool open_up) {
@@ -226,23 +155,46 @@ static int relative_y_to(lv_obj_t* obj, lv_obj_t* ancestor) {
     return y;
 }
 
+// ── Custom numeric keypad map ──────────────────────────────────────────────
+//   7  8  9  ⌫
+//   4  5  6  -
+//   1  2  3  .
+//   [    0    ] ✕
+// Buttons: digits, minus, decimal, backspace, close. No OK/validate.
+static const char* num_kb_map[] = {
+    "7", "8", "9", LV_SYMBOL_BACKSPACE, "\n",
+    "4", "5", "6", "-",                  "\n",
+    "1", "2", "3", ".",                  "\n",
+    "0", LV_SYMBOL_CLOSE, ""
+};
+// Width units per row (must sum to the same total per row). Row 4: "0" spans 3 cells.
+// W() macro casts ints to the lv_buttonmatrix_ctrl_t enum for C++ strict typing.
+#define W(n) (lv_buttonmatrix_ctrl_t)(n)
+static const lv_buttonmatrix_ctrl_t num_kb_ctrl[] = {
+    W(1), W(1), W(1), W(1),
+    W(1), W(1), W(1), W(1),
+    W(1), W(1), W(1), W(1),
+    W(3), W(1)
+};
+#undef W
+
 // Focus / defocus handler for the custom-coords textareas.
 static void custom_ta_event_cb(lv_event_t* e) {
     lv_event_code_t code = lv_event_get_code(e);
     lv_obj_t* ta = (lv_obj_t*)lv_event_get_target(e);
     if (!custom_kb) return;
     if (code == LV_EVENT_FOCUSED) {
-        lv_keyboard_set_mode(custom_kb, LV_KEYBOARD_MODE_NUMBER);
+        lv_keyboard_set_mode(custom_kb, LV_KEYBOARD_MODE_USER_1);
         lv_keyboard_set_textarea(custom_kb, ta);
         lv_obj_clear_flag(custom_kb, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(custom_kb);  // ensure keyboard renders above content
+        lv_obj_move_foreground(custom_kb);
 
-        // Scroll the focused textarea above the keyboard.
-        // The keyboard covers the bottom 220px (480 - 220 = 260 visible top).
-        // Aim for the textarea to land ~40px from the top of the visible area.
+        // Scroll the focused textarea up into the safe zone above the keyboard.
+        // Keyboard sits bottom-right, 340x200, so its top edge is around y=268.
+        // Land the textarea ~80px from the top so it (and its label) sit above the kb.
         if (settings_scrollable) {
             int ta_y = relative_y_to(ta, settings_scrollable);
-            int target = ta_y - 40;
+            int target = ta_y - 80;
             if (target < 0) target = 0;
             lv_obj_scroll_to_y(settings_scrollable, target, LV_ANIM_ON);
         }
@@ -252,24 +204,41 @@ static void custom_ta_event_cb(lv_event_t* e) {
     }
 }
 
+// Close-button (LV_SYMBOL_CLOSE) on the keyboard fires LV_EVENT_CANCEL.
+// Save the current values and clear the textarea focus state so the NEXT tap
+// on a textarea fires FOCUSED again (and re-shows the keyboard).
+static void kb_close_event_cb(lv_event_t* e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code != LV_EVENT_CANCEL && code != LV_EVENT_READY) return;
+    persist_custom_loc_from_textareas();
+    lv_obj_add_flag(custom_kb, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_t* ta = lv_keyboard_get_textarea(custom_kb);
+    if (ta) {
+        lv_obj_clear_state(ta, LV_STATE_FOCUSED);
+        lv_obj_clear_state(ta, LV_STATE_FOCUS_KEY);
+    }
+    lv_keyboard_set_textarea(custom_kb, NULL);
+}
+
 // Apply dark-mode styling to the keyboard.
 static void style_keyboard_dark(lv_obj_t* kb) {
-    // Main background
+    // Main background — slightly larger radius so the floating panel has a card feel
     lv_obj_set_style_bg_color(kb, CLK_KB_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_color(kb, CLK_CARD_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(kb, SET_CARD_BORDER, LV_PART_MAIN);
     lv_obj_set_style_border_width(kb, 1, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(kb, 4, LV_PART_MAIN);
-    lv_obj_set_style_radius(kb, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(kb, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_gap(kb, 4, LV_PART_MAIN);
+    lv_obj_set_style_radius(kb, 12, LV_PART_MAIN);
 
     // Key buttons
     lv_obj_set_style_bg_color(kb, CLK_KB_KEY, LV_PART_ITEMS);
     lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, LV_PART_ITEMS);
     lv_obj_set_style_text_color(kb, COL_TEXT, LV_PART_ITEMS);
-    lv_obj_set_style_text_font(kb, &lv_font_montserrat_16, LV_PART_ITEMS);
+    lv_obj_set_style_text_font(kb, &lv_font_montserrat_18, LV_PART_ITEMS);
     lv_obj_set_style_border_color(kb, CLK_KB_KEY_BORD, LV_PART_ITEMS);
     lv_obj_set_style_border_width(kb, 1, LV_PART_ITEMS);
-    lv_obj_set_style_radius(kb, 6, LV_PART_ITEMS);
+    lv_obj_set_style_radius(kb, 8, LV_PART_ITEMS);
 
     // Pressed-key feedback
     lv_obj_set_style_bg_color(kb, COL_ACCENT,
@@ -568,11 +537,17 @@ void createClockSettingsScreen() {
         }, LV_EVENT_VALUE_CHANGED, NULL);
     }
 
-    // ─── Floating numeric keyboard (dark-styled) ────────────────────────────
+    // ─── Floating compact numeric pad (dark-styled, 4×4) ────────────────────
+    // Custom map: digits + minus + decimal + backspace + close. No OK/validate.
+    // Smaller than the default LV_KEYBOARD_MODE_NUMBER (which has +/-, layout
+    // switchers, and a validate button that wasn't wired here).
     custom_kb = lv_keyboard_create(scr_clock_settings);
-    lv_obj_set_size(custom_kb, lv_pct(100), 220);
-    lv_obj_align(custom_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_keyboard_set_map(custom_kb, LV_KEYBOARD_MODE_USER_1, num_kb_map, num_kb_ctrl);
+    lv_keyboard_set_mode(custom_kb, LV_KEYBOARD_MODE_USER_1);
+    lv_obj_set_size(custom_kb, 340, 200);
+    lv_obj_align(custom_kb, LV_ALIGN_BOTTOM_RIGHT, -12, -12);
     lv_obj_add_flag(custom_kb, LV_OBJ_FLAG_HIDDEN);
-    lv_keyboard_set_mode(custom_kb, LV_KEYBOARD_MODE_NUMBER);
+    lv_obj_add_event_cb(custom_kb, kb_close_event_cb, LV_EVENT_CANCEL, NULL);
+    lv_obj_add_event_cb(custom_kb, kb_close_event_cb, LV_EVENT_READY,  NULL);
     style_keyboard_dark(custom_kb);
 }

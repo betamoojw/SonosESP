@@ -352,6 +352,27 @@ static void fetchClockWeather() {
             if (!ip_ok) { Serial.println("[CLKWX] IP location failed"); return; }
             Serial.printf("[CLKWX] IP location: %.2f, %.2f\n", lat, lon);
         }
+    } else if (clock_weather_city_idx == CLOCK_LOC_CUSTOM_IDX) {
+        // Custom user-supplied coordinates (issue #74).
+        // Read the atomic float globals directly — DO NOT touch NVS here. clockBgTask has a
+        // PSRAM stack, and NVS reads internally call spi_flash_disable_interrupts_caches_
+        // and_other_cpu() which asserts esp_task_stack_is_sane_cache_disabled() on PSRAM
+        // stacks → cache_utils.c:129 panic. (4-byte aligned float reads are atomic.)
+        float lat_val = clock_custom_lat;
+        float lon_val = clock_custom_lon;
+        if (lat_val == 0.0f && lon_val == 0.0f) {
+            Serial.println("[CLKWX] Custom location selected but coords are unset");
+            return;
+        }
+        if (lat_val < -90.0f  || lat_val > 90.0f  ||
+            lon_val < -180.0f || lon_val > 180.0f) {
+            Serial.printf("[CLKWX] Custom coords out of range: %.4f, %.4f\n", lat_val, lon_val);
+            return;
+        }
+        lat = lat_val;
+        lon = lon_val;
+        snprintf(clock_wx_city_name, sizeof(clock_wx_city_name), "%.2f, %.2f", lat, lon);
+        Serial.printf("[CLKWX] Using custom location: %.4f, %.4f\n", lat, lon);
     } else {
         lat = CLOCK_CITIES[clock_weather_city_idx].lat;
         lon = CLOCK_CITIES[clock_weather_city_idx].lon;

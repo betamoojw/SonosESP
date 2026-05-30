@@ -1,53 +1,250 @@
 /**
- * Clock Settings Screen
- * Configure clock/screensaver: trigger mode, inactivity timeout,
- * photo background + refresh interval, and timezone selection.
- * All settings persisted to NVS immediately on change.
+ * Clock Settings Screen — card-based dark theme.
+ *
+ * Sections grouped into 4 cards (Display, Photo Background, Time Zone, Weather)
+ * for visual hierarchy and easier scanning vs the previous flat list. Same NVS
+ * keys, same callbacks — no behavior change for existing settings.
+ *
+ * Adds optional manual location override (issue #74) via a 3-option method
+ * dropdown inside the Weather card:
+ *   - Auto-detect from IP
+ *   - Predefined city  (reveals the existing city list as a sub-dropdown)
+ *   - Custom coordinates  (reveals lat/lon textareas)
+ * Method is encoded in the existing clock_weather_city_idx — 0 = Auto,
+ * 1..CLOCK_CITY_COUNT-1 = predefined, CLOCK_LOC_CUSTOM_IDX = custom.
+ *
+ * Coords are written to NVS by the main thread only; fetchClockWeather() reads
+ * the atomic float globals (clock_custom_lat/lon) — never touches NVS itself,
+ * since clockBgTask has a PSRAM stack which would crash on the cache-disable
+ * assert during a flash op.
  */
 
 #include "ui_common.h"
 #include "config.h"
 #include "clock_screen.h"
+#include "ui_settings_card.h"  // shared card helpers: addCard, addSettingLabel, addDescLabel, addSwitch
 
-// Forward declaration
+// Forward declaration (defined in ui_sidebar.cpp)
 lv_obj_t* createSettingsSidebar(lv_obj_t* screen, int activeIdx);
 
-// ============================================================================
-// Helper — reusable section header separator line
-// ============================================================================
-static void addSectionLabel(lv_obj_t* parent, const char* text) {
-    lv_obj_t* lbl = lv_label_create(parent);
-    lv_label_set_text(lbl, text);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(lbl, COL_TEXT, 0);
-    lv_obj_set_style_pad_top(lbl, 12, 0);
+// ─────────────────────────────────────────────────────────────────────────────
+// Clock-specific theme tokens (form inputs + keyboard, not in the shared header
+// because only this screen uses them so far)
+// ─────────────────────────────────────────────────────────────────────────────
+#define CLK_INPUT_BG    lv_color_hex(0x222222)
+#define CLK_INPUT_BORD  lv_color_hex(0x3A3A3A)
+#define CLK_KB_BG       lv_color_hex(0x1A1A1A)
+#define CLK_KB_KEY      lv_color_hex(0x2A2A2A)
+#define CLK_KB_KEY_BORD lv_color_hex(0x3A3A3A)
+
+// Location method indices (UI-level — derived from clock_weather_city_idx)
+#define LOC_METHOD_AUTO    0
+#define LOC_METHOD_CITY    1
+#define LOC_METHOD_CUSTOM  2
+
+static lv_obj_t* makeDropdown(lv_obj_t* parent, const char* options,
+                              uint16_t selected, bool open_up) {
+    lv_obj_t* dd = lv_dropdown_create(parent);
+    lv_dropdown_set_options(dd, options);
+    lv_dropdown_set_selected(dd, selected);
+    lv_obj_set_width(dd, lv_pct(100));
+    lv_obj_set_style_bg_color(dd, CLK_INPUT_BG, 0);
+    lv_obj_set_style_text_color(dd, COL_TEXT, 0);
+    lv_obj_set_style_text_font(dd, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_border_color(dd, CLK_INPUT_BORD, 0);
+    lv_obj_set_style_radius(dd, 8, 0);
+    lv_obj_set_style_pad_all(dd, 10, 0);
+    if (open_up) lv_dropdown_set_dir(dd, LV_DIR_TOP);
+    lv_obj_t* list = lv_dropdown_get_list(dd);
+    if (list) {
+        lv_obj_set_height(list, 260);
+        lv_obj_set_style_bg_color(list, lv_color_hex(0x222222), 0);
+        lv_obj_set_style_text_color(list, COL_TEXT, 0);
+        lv_obj_set_style_text_font(list, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_border_color(list, CLK_INPUT_BORD, 0);
+    }
+    return dd;
 }
 
-static void addDescLabel(lv_obj_t* parent, const char* text) {
-    lv_obj_t* lbl = lv_label_create(parent);
-    lv_label_set_text(lbl, text);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lbl, COL_TEXT2, 0);
+static lv_obj_t* makeSlider(lv_obj_t* parent, int min, int max, int value) {
+    lv_obj_t* s = lv_slider_create(parent);
+    lv_obj_set_width(s, lv_pct(100));
+    lv_obj_set_height(s, 20);
+    lv_slider_set_range(s, min, max);
+    lv_slider_set_value(s, value, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(s, lv_color_hex(0x333333), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s, COL_ACCENT, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(s, COL_ACCENT, LV_PART_KNOB);
+    lv_obj_set_style_radius(s, 10, LV_PART_MAIN);
+    lv_obj_set_style_radius(s, 10, LV_PART_INDICATOR);
+    lv_obj_set_style_pad_all(s, 2, LV_PART_KNOB);
+    return s;
 }
 
-// ============================================================================
-// Helper — styled switch matching the General screen pattern
-// ============================================================================
-static lv_obj_t* addSwitch(lv_obj_t* parent, bool initial) {
-    lv_obj_t* sw = lv_switch_create(parent);
-    lv_obj_set_size(sw, 50, 26);
-    lv_obj_set_style_margin_top(sw, 8, 0);
-    lv_obj_set_style_radius(sw, 13, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(sw, lv_color_hex(0x333333), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(sw, COL_ACCENT,
-        (lv_style_selector_t)((uint32_t)LV_PART_INDICATOR | (uint32_t)LV_STATE_CHECKED));
-    lv_obj_set_style_radius(sw, 13, LV_PART_INDICATOR);
-    lv_obj_set_style_pad_all(sw, 0, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(sw, COL_TEXT, LV_PART_KNOB);
-    lv_obj_set_style_radius(sw, 11, LV_PART_KNOB);
-    lv_obj_set_style_pad_all(sw, -3, LV_PART_KNOB);
-    if (initial) lv_obj_add_state(sw, LV_STATE_CHECKED);
-    return sw;
+static lv_obj_t* makeTextarea(lv_obj_t* parent, const char* initial,
+                              const char* accept_chars, int max_len,
+                              const char* placeholder) {
+    lv_obj_t* ta = lv_textarea_create(parent);
+    lv_textarea_set_one_line(ta, true);
+    if (initial && initial[0]) lv_textarea_set_text(ta, initial);
+    if (placeholder) lv_textarea_set_placeholder_text(ta, placeholder);
+    if (accept_chars) lv_textarea_set_accepted_chars(ta, accept_chars);
+    if (max_len > 0) lv_textarea_set_max_length(ta, max_len);
+    lv_obj_set_width(ta, lv_pct(100));
+    lv_obj_set_style_bg_color(ta, CLK_INPUT_BG, 0);
+    lv_obj_set_style_text_color(ta, COL_TEXT, 0);
+    lv_obj_set_style_text_font(ta, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_border_color(ta, CLK_INPUT_BORD, 0);
+    lv_obj_set_style_border_width(ta, 1, 0);
+    lv_obj_set_style_radius(ta, 8, 0);
+    lv_obj_set_style_pad_all(ta, 10, 0);
+    return ta;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Location method UI — state shared across callbacks
+// ─────────────────────────────────────────────────────────────────────────────
+static lv_obj_t* city_sub_container  = nullptr;  // wraps "City" label + dropdown
+static lv_obj_t* dd_city             = nullptr;
+static lv_obj_t* custom_loc_card     = nullptr;
+static lv_obj_t* custom_lat_ta       = nullptr;
+static lv_obj_t* custom_lon_ta       = nullptr;
+static lv_obj_t* custom_kb           = nullptr;
+static lv_obj_t* settings_scrollable = nullptr;  // content area returned by sidebar — used for scroll-into-view
+
+// Show/hide the sub-controls based on the selected method.
+static void update_location_method_visibility(int method) {
+    if (city_sub_container) {
+        if (method == LOC_METHOD_CITY) lv_obj_clear_flag(city_sub_container, LV_OBJ_FLAG_HIDDEN);
+        else                            lv_obj_add_flag(city_sub_container,  LV_OBJ_FLAG_HIDDEN);
+    }
+    if (custom_loc_card) {
+        if (method == LOC_METHOD_CUSTOM) lv_obj_clear_flag(custom_loc_card, LV_OBJ_FLAG_HIDDEN);
+        else                              lv_obj_add_flag(custom_loc_card,  LV_OBJ_FLAG_HIDDEN);
+    }
+    if (method != LOC_METHOD_CUSTOM && custom_kb) {
+        lv_obj_add_flag(custom_kb, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+// Persist current textarea contents (called on DEFOCUS).
+static void persist_custom_loc_from_textareas() {
+    if (!custom_lat_ta || !custom_lon_ta) return;
+    const char* lat_s = lv_textarea_get_text(custom_lat_ta);
+    const char* lon_s = lv_textarea_get_text(custom_lon_ta);
+    // Update atomic floats first (read lock-free by bg task)
+    clock_custom_lat = (float)atof(lat_s);
+    clock_custom_lon = (float)atof(lon_s);
+    // Persist text form to NVS (mainAppTask = internal SRAM stack, NVS-safe)
+    wifiPrefs.putString(NVS_KEY_CLOCK_WX_CUSTOM_LAT, lat_s);
+    wifiPrefs.putString(NVS_KEY_CLOCK_WX_CUSTOM_LON, lon_s);
+    clock_wx_valid = false;
+    clock_weather_needs_refetch = true;
+    Serial.printf("[CLOCK] Custom location saved: %.4f, %.4f\n",
+                  (double)clock_custom_lat, (double)clock_custom_lon);
+}
+
+// Sum the Y coords from `obj` up the parent chain until (but not including) `ancestor`.
+static int relative_y_to(lv_obj_t* obj, lv_obj_t* ancestor) {
+    int y = 0;
+    lv_obj_t* o = obj;
+    while (o && o != ancestor) {
+        y += lv_obj_get_y(o);
+        o = lv_obj_get_parent(o);
+    }
+    return y;
+}
+
+// ── Custom numeric keypad map ──────────────────────────────────────────────
+//   7  8  9  ⌫
+//   4  5  6  -
+//   1  2  3  .
+//   [    0    ] ✕
+// Buttons: digits, minus, decimal, backspace, close. No OK/validate.
+static const char* num_kb_map[] = {
+    "7", "8", "9", LV_SYMBOL_BACKSPACE, "\n",
+    "4", "5", "6", "-",                  "\n",
+    "1", "2", "3", ".",                  "\n",
+    "0", LV_SYMBOL_CLOSE, ""
+};
+// Width units per row (must sum to the same total per row). Row 4: "0" spans 3 cells.
+// W() macro casts ints to the lv_buttonmatrix_ctrl_t enum for C++ strict typing.
+#define W(n) (lv_buttonmatrix_ctrl_t)(n)
+static const lv_buttonmatrix_ctrl_t num_kb_ctrl[] = {
+    W(1), W(1), W(1), W(1),
+    W(1), W(1), W(1), W(1),
+    W(1), W(1), W(1), W(1),
+    W(3), W(1)
+};
+#undef W
+
+// Focus / defocus handler for the custom-coords textareas.
+static void custom_ta_event_cb(lv_event_t* e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_obj_t* ta = (lv_obj_t*)lv_event_get_target(e);
+    if (!custom_kb) return;
+    if (code == LV_EVENT_FOCUSED) {
+        lv_keyboard_set_mode(custom_kb, LV_KEYBOARD_MODE_USER_1);
+        lv_keyboard_set_textarea(custom_kb, ta);
+        lv_obj_clear_flag(custom_kb, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(custom_kb);
+
+        // Scroll the focused textarea up into the safe zone above the keyboard.
+        // Keyboard sits bottom-right, 340x200, so its top edge is around y=268.
+        // Land the textarea ~80px from the top so it (and its label) sit above the kb.
+        if (settings_scrollable) {
+            int ta_y = relative_y_to(ta, settings_scrollable);
+            int target = ta_y - 80;
+            if (target < 0) target = 0;
+            lv_obj_scroll_to_y(settings_scrollable, target, LV_ANIM_ON);
+        }
+    } else if (code == LV_EVENT_DEFOCUSED) {
+        persist_custom_loc_from_textareas();
+        lv_obj_add_flag(custom_kb, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+// Close-button (LV_SYMBOL_CLOSE) on the keyboard fires LV_EVENT_CANCEL.
+// Save the current values and clear the textarea focus state so the NEXT tap
+// on a textarea fires FOCUSED again (and re-shows the keyboard).
+static void kb_close_event_cb(lv_event_t* e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code != LV_EVENT_CANCEL && code != LV_EVENT_READY) return;
+    persist_custom_loc_from_textareas();
+    lv_obj_add_flag(custom_kb, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_t* ta = lv_keyboard_get_textarea(custom_kb);
+    if (ta) {
+        lv_obj_clear_state(ta, LV_STATE_FOCUSED);
+        lv_obj_clear_state(ta, LV_STATE_FOCUS_KEY);
+    }
+    lv_keyboard_set_textarea(custom_kb, NULL);
+}
+
+// Apply dark-mode styling to the keyboard.
+static void style_keyboard_dark(lv_obj_t* kb) {
+    // Main background — slightly larger radius so the floating panel has a card feel
+    lv_obj_set_style_bg_color(kb, CLK_KB_BG, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(kb, SET_CARD_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(kb, 1, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(kb, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_gap(kb, 4, LV_PART_MAIN);
+    lv_obj_set_style_radius(kb, 12, LV_PART_MAIN);
+
+    // Key buttons
+    lv_obj_set_style_bg_color(kb, CLK_KB_KEY, LV_PART_ITEMS);
+    lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, LV_PART_ITEMS);
+    lv_obj_set_style_text_color(kb, COL_TEXT, LV_PART_ITEMS);
+    lv_obj_set_style_text_font(kb, &lv_font_montserrat_18, LV_PART_ITEMS);
+    lv_obj_set_style_border_color(kb, CLK_KB_KEY_BORD, LV_PART_ITEMS);
+    lv_obj_set_style_border_width(kb, 1, LV_PART_ITEMS);
+    lv_obj_set_style_radius(kb, 8, LV_PART_ITEMS);
+
+    // Pressed-key feedback
+    lv_obj_set_style_bg_color(kb, COL_ACCENT,
+        (lv_style_selector_t)((uint32_t)LV_PART_ITEMS | (uint32_t)LV_STATE_PRESSED));
+    lv_obj_set_style_text_color(kb, lv_color_hex(0x000000),
+        (lv_style_selector_t)((uint32_t)LV_PART_ITEMS | (uint32_t)LV_STATE_PRESSED));
 }
 
 // ============================================================================
@@ -62,273 +259,295 @@ void createClockSettingsScreen() {
     lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_style_pad_row(content, 0, 0);
+    settings_scrollable = content;  // remember for scroll-into-view on keyboard focus
 
-    // ── Title ────────────────────────────────────────────────────────────────
+    // ── Screen title ─────────────────────────────────────────────────────────
     lv_obj_t* lbl_title = lv_label_create(content);
     lv_label_set_text(lbl_title, "Clock");
     lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(lbl_title, COL_TEXT, 0);
-    lv_obj_set_style_pad_bottom(lbl_title, 8, 0);
+    lv_obj_set_style_pad_bottom(lbl_title, 12, 0);
 
-    // ── Activate mode ────────────────────────────────────────────────────────
-    addSectionLabel(content, "Activate clock screen:");
-    addDescLabel(content,
-        "Choose when the clock/screensaver should appear");
-
-    lv_obj_t* dd_mode = lv_dropdown_create(content);
-    lv_dropdown_set_options(dd_mode,
-        "Disabled\n"
-        "After inactivity\n"
-        "After inactivity  paused only\n"
-        "After inactivity  nothing playing");
-    lv_dropdown_set_selected(dd_mode, (uint16_t)clock_mode);
-    lv_obj_set_width(dd_mode, lv_pct(100));
-    lv_obj_set_style_bg_color(dd_mode, COL_CARD, 0);
-    lv_obj_set_style_text_color(dd_mode, COL_TEXT, 0);
-    lv_obj_set_style_text_font(dd_mode, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_border_color(dd_mode, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_pad_top(dd_mode, 6, 0);
-    lv_obj_set_style_pad_bottom(dd_mode, 12, 0);
+    // ────────────────────────────────────────────────────────────────────────
+    // CARD 1 — Display
+    // ────────────────────────────────────────────────────────────────────────
     {
-        lv_obj_t* list = lv_dropdown_get_list(dd_mode);
-        if (list) {
-            lv_obj_set_style_bg_color(list, lv_color_hex(0x222222), 0);
-            lv_obj_set_style_text_color(list, COL_TEXT, 0);
-            lv_obj_set_style_text_font(list, &lv_font_montserrat_14, 0);
-        }
-    }
-    lv_obj_add_event_cb(dd_mode, [](lv_event_t* e) {
-        lv_obj_t* dd = (lv_obj_t*)lv_event_get_target(e);
-        clock_mode = (int)lv_dropdown_get_selected(dd);
-        wifiPrefs.putInt(NVS_KEY_CLOCK_MODE, clock_mode);
-    }, LV_EVENT_VALUE_CHANGED, NULL);
+        lv_obj_t* card = addCard(content, "Display");
 
-    // ── Inactivity timeout ───────────────────────────────────────────────────
-    addSectionLabel(content, "Inactivity timeout:");
+        addSettingLabel(card, "Activate clock");
+        addDescLabel(card, "Choose when the clock/screensaver should appear");
+        lv_obj_t* dd_mode = makeDropdown(card,
+            "Disabled\n"
+            "After inactivity\n"
+            "After inactivity (paused only)\n"
+            "After inactivity (nothing playing)",
+            (uint16_t)clock_mode, false);
+        lv_obj_add_event_cb(dd_mode, [](lv_event_t* e) {
+            lv_obj_t* dd = (lv_obj_t*)lv_event_get_target(e);
+            clock_mode = (int)lv_dropdown_get_selected(dd);
+            wifiPrefs.putInt(NVS_KEY_CLOCK_MODE, clock_mode);
+        }, LV_EVENT_VALUE_CHANGED, NULL);
 
-    static lv_obj_t* lbl_timeout_val;
-    lbl_timeout_val = lv_label_create(content);
-    lv_label_set_text_fmt(lbl_timeout_val, "%d min", clock_timeout_min);
-    lv_obj_set_style_text_color(lbl_timeout_val, COL_ACCENT, 0);
-    lv_obj_set_style_text_font(lbl_timeout_val, &lv_font_montserrat_14, 0);
+        addSettingLabel(card, "Inactivity timeout");
+        static lv_obj_t* lbl_timeout_val;
+        lbl_timeout_val = lv_label_create(card);
+        lv_label_set_text_fmt(lbl_timeout_val, "%d min", clock_timeout_min);
+        lv_obj_set_style_text_color(lbl_timeout_val, COL_ACCENT, 0);
+        lv_obj_set_style_text_font(lbl_timeout_val, &lv_font_montserrat_14, 0);
 
-    lv_obj_t* slider_timeout = lv_slider_create(content);
-    lv_obj_set_width(slider_timeout, lv_pct(100));
-    lv_obj_set_height(slider_timeout, 20);
-    lv_slider_set_range(slider_timeout, 1, 60);
-    lv_slider_set_value(slider_timeout, clock_timeout_min, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(slider_timeout, lv_color_hex(0x333333), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(slider_timeout, COL_ACCENT, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(slider_timeout, COL_ACCENT, LV_PART_KNOB);
-    lv_obj_set_style_radius(slider_timeout, 10, LV_PART_MAIN);
-    lv_obj_set_style_radius(slider_timeout, 10, LV_PART_INDICATOR);
-    lv_obj_set_style_pad_all(slider_timeout, 2, LV_PART_KNOB);
-    lv_obj_set_style_pad_top(slider_timeout, 4, 0);
-    lv_obj_set_style_pad_bottom(slider_timeout, 12, 0);
-    lv_obj_add_event_cb(slider_timeout, [](lv_event_t* e) {
-        lv_obj_t* slider = (lv_obj_t*)lv_event_get_target(e);
-        clock_timeout_min = lv_slider_get_value(slider);
-        lv_label_set_text_fmt((lv_obj_t*)lv_event_get_user_data(e),
-                              "%d min", clock_timeout_min);
-        wifiPrefs.putInt(NVS_KEY_CLOCK_TIMEOUT, clock_timeout_min);
-    }, LV_EVENT_VALUE_CHANGED, lbl_timeout_val);
+        lv_obj_t* sl_timeout = makeSlider(card, 1, 60, clock_timeout_min);
+        lv_obj_add_event_cb(sl_timeout, [](lv_event_t* e) {
+            lv_obj_t* s = (lv_obj_t*)lv_event_get_target(e);
+            clock_timeout_min = lv_slider_get_value(s);
+            lv_label_set_text_fmt((lv_obj_t*)lv_event_get_user_data(e),
+                                  "%d min", clock_timeout_min);
+            wifiPrefs.putInt(NVS_KEY_CLOCK_TIMEOUT, clock_timeout_min);
+        }, LV_EVENT_VALUE_CHANGED, lbl_timeout_val);
 
-    // ── Time format ──────────────────────────────────────────────────────────
-    addSectionLabel(content, "Time format:");
-    addDescLabel(content, "12-hour (AM/PM)");
-
-    lv_obj_t* sw_12h = addSwitch(content, clock_12h);
-    lv_obj_add_event_cb(sw_12h, [](lv_event_t* e) {
-        lv_obj_t* sw = (lv_obj_t*)lv_event_get_target(e);
-        clock_12h = lv_obj_has_state(sw, LV_STATE_CHECKED);
-        wifiPrefs.putBool(NVS_KEY_CLOCK_12H, clock_12h);
-    }, LV_EVENT_VALUE_CHANGED, NULL);
-
-    // ── Photo background ─────────────────────────────────────────────────────
-    addSectionLabel(content, "Photo background:");
-    addDescLabel(content, "Random photos from Flickr via loremflickr.com (requires WiFi)");
-
-    lv_obj_t* sw_picsum = addSwitch(content, clock_picsum_enabled);
-    lv_obj_add_event_cb(sw_picsum, [](lv_event_t* e) {
-        lv_obj_t* sw = (lv_obj_t*)lv_event_get_target(e);
-        clock_picsum_enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
-        wifiPrefs.putBool(NVS_KEY_CLOCK_PICSUM, clock_picsum_enabled);
-    }, LV_EVENT_VALUE_CHANGED, NULL);
-
-    // ── Photo theme keyword ───────────────────────────────────────────────────
-    addSectionLabel(content, "Photo theme:");
-    addDescLabel(content, "Category of photos to show");
-
-    // Build newline-separated options string from the keyword list
-    static char kw_opts[256];
-    kw_opts[0] = '\0';
-    for (int i = 0; i < CLOCK_BG_KW_COUNT; i++) {
-        strncat(kw_opts, CLOCK_BG_KEYWORDS[i].label, sizeof(kw_opts) - strlen(kw_opts) - 2);
-        if (i < CLOCK_BG_KW_COUNT - 1)
-            strncat(kw_opts, "\n", sizeof(kw_opts) - strlen(kw_opts) - 1);
+        addSettingLabel(card, "12-hour format (AM/PM)");
+        addDescLabel(card, "Off = 24-hour clock");
+        lv_obj_t* sw_12h = addSwitch(card, clock_12h);
+        lv_obj_add_event_cb(sw_12h, [](lv_event_t* e) {
+            lv_obj_t* sw = (lv_obj_t*)lv_event_get_target(e);
+            clock_12h = lv_obj_has_state(sw, LV_STATE_CHECKED);
+            wifiPrefs.putBool(NVS_KEY_CLOCK_12H, clock_12h);
+        }, LV_EVENT_VALUE_CHANGED, NULL);
     }
 
-    lv_obj_t* dd_kw = lv_dropdown_create(content);
-    lv_dropdown_set_options(dd_kw, kw_opts);
-    lv_dropdown_set_selected(dd_kw, (uint16_t)clock_bg_kw_idx);
-    lv_obj_set_width(dd_kw, lv_pct(100));
-    lv_obj_set_style_bg_color(dd_kw, COL_CARD, 0);
-    lv_obj_set_style_text_color(dd_kw, COL_TEXT, 0);
-    lv_obj_set_style_text_font(dd_kw, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_border_color(dd_kw, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_pad_top(dd_kw, 6, 0);
-    lv_obj_set_style_pad_bottom(dd_kw, 12, 0);
+    // ────────────────────────────────────────────────────────────────────────
+    // CARD 2 — Photo Background
+    // ────────────────────────────────────────────────────────────────────────
     {
-        lv_obj_t* list = lv_dropdown_get_list(dd_kw);
-        if (list) {
-            lv_obj_set_style_bg_color(list, lv_color_hex(0x222222), 0);
-            lv_obj_set_style_text_color(list, COL_TEXT, 0);
-            lv_obj_set_style_text_font(list, &lv_font_montserrat_14, 0);
+        lv_obj_t* card = addCard(content, "Photo Background");
+
+        addSettingLabel(card, "Enable random photos");
+        addDescLabel(card, "Random photos from Flickr via loremflickr.com (requires WiFi)");
+        lv_obj_t* sw_picsum = addSwitch(card, clock_picsum_enabled);
+        lv_obj_add_event_cb(sw_picsum, [](lv_event_t* e) {
+            lv_obj_t* sw = (lv_obj_t*)lv_event_get_target(e);
+            clock_picsum_enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
+            wifiPrefs.putBool(NVS_KEY_CLOCK_PICSUM, clock_picsum_enabled);
+        }, LV_EVENT_VALUE_CHANGED, NULL);
+
+        addSettingLabel(card, "Photo theme");
+        static char kw_opts[256];
+        kw_opts[0] = '\0';
+        for (int i = 0; i < CLOCK_BG_KW_COUNT; i++) {
+            strncat(kw_opts, CLOCK_BG_KEYWORDS[i].label, sizeof(kw_opts) - strlen(kw_opts) - 2);
+            if (i < CLOCK_BG_KW_COUNT - 1)
+                strncat(kw_opts, "\n", sizeof(kw_opts) - strlen(kw_opts) - 1);
         }
-    }
-    lv_obj_add_event_cb(dd_kw, [](lv_event_t* e) {
-        lv_obj_t* dd = (lv_obj_t*)lv_event_get_target(e);
-        clock_bg_kw_idx = (int)lv_dropdown_get_selected(dd);
-        wifiPrefs.putInt(NVS_KEY_CLOCK_KW, clock_bg_kw_idx);
-    }, LV_EVENT_VALUE_CHANGED, NULL);
+        lv_obj_t* dd_kw = makeDropdown(card, kw_opts, (uint16_t)clock_bg_kw_idx, false);
+        lv_obj_add_event_cb(dd_kw, [](lv_event_t* e) {
+            lv_obj_t* dd = (lv_obj_t*)lv_event_get_target(e);
+            clock_bg_kw_idx = (int)lv_dropdown_get_selected(dd);
+            wifiPrefs.putInt(NVS_KEY_CLOCK_KW, clock_bg_kw_idx);
+        }, LV_EVENT_VALUE_CHANGED, NULL);
 
-    // ── Photo refresh interval ───────────────────────────────────────────────
-    addSectionLabel(content, "Photo refresh interval:");
+        addSettingLabel(card, "Photo refresh interval");
+        static lv_obj_t* lbl_refresh_val;
+        lbl_refresh_val = lv_label_create(card);
+        lv_label_set_text_fmt(lbl_refresh_val, "%d min", clock_refresh_min);
+        lv_obj_set_style_text_color(lbl_refresh_val, COL_ACCENT, 0);
+        lv_obj_set_style_text_font(lbl_refresh_val, &lv_font_montserrat_14, 0);
 
-    static lv_obj_t* lbl_refresh_val;
-    lbl_refresh_val = lv_label_create(content);
-    lv_label_set_text_fmt(lbl_refresh_val, "%d min", clock_refresh_min);
-    lv_obj_set_style_text_color(lbl_refresh_val, COL_ACCENT, 0);
-    lv_obj_set_style_text_font(lbl_refresh_val, &lv_font_montserrat_14, 0);
-
-    lv_obj_t* slider_refresh = lv_slider_create(content);
-    lv_obj_set_width(slider_refresh, lv_pct(100));
-    lv_obj_set_height(slider_refresh, 20);
-    lv_slider_set_range(slider_refresh, 1, 60);
-    lv_slider_set_value(slider_refresh, clock_refresh_min, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(slider_refresh, lv_color_hex(0x333333), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(slider_refresh, COL_ACCENT, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(slider_refresh, COL_ACCENT, LV_PART_KNOB);
-    lv_obj_set_style_radius(slider_refresh, 10, LV_PART_MAIN);
-    lv_obj_set_style_radius(slider_refresh, 10, LV_PART_INDICATOR);
-    lv_obj_set_style_pad_all(slider_refresh, 2, LV_PART_KNOB);
-    lv_obj_set_style_pad_top(slider_refresh, 4, 0);
-    lv_obj_set_style_pad_bottom(slider_refresh, 12, 0);
-    lv_obj_add_event_cb(slider_refresh, [](lv_event_t* e) {
-        lv_obj_t* slider = (lv_obj_t*)lv_event_get_target(e);
-        clock_refresh_min = lv_slider_get_value(slider);
-        lv_label_set_text_fmt((lv_obj_t*)lv_event_get_user_data(e),
-                              "%d min", clock_refresh_min);
-        wifiPrefs.putInt(NVS_KEY_CLOCK_REFRESH, clock_refresh_min);
-    }, LV_EVENT_VALUE_CHANGED, lbl_refresh_val);
-
-    // ── Timezone ─────────────────────────────────────────────────────────────
-    addSectionLabel(content, "Timezone:");
-    addDescLabel(content, "Select your local timezone");
-
-    // Build newline-separated options string for the dropdown
-    // Each name is at most ~45 chars; 82 zones * 46 = ~3772 bytes total
-    static char tz_opts[4096];
-    tz_opts[0] = '\0';
-    for (int i = 0; i < CLOCK_ZONES_COUNT; i++) {
-        strncat(tz_opts, CLOCK_ZONES[i].name, sizeof(tz_opts) - strlen(tz_opts) - 2);
-        if (i < CLOCK_ZONES_COUNT - 1) {
-            strncat(tz_opts, "\n", sizeof(tz_opts) - strlen(tz_opts) - 1);
-        }
+        lv_obj_t* sl_refresh = makeSlider(card, 1, 60, clock_refresh_min);
+        lv_obj_add_event_cb(sl_refresh, [](lv_event_t* e) {
+            lv_obj_t* s = (lv_obj_t*)lv_event_get_target(e);
+            clock_refresh_min = lv_slider_get_value(s);
+            lv_label_set_text_fmt((lv_obj_t*)lv_event_get_user_data(e),
+                                  "%d min", clock_refresh_min);
+            wifiPrefs.putInt(NVS_KEY_CLOCK_REFRESH, clock_refresh_min);
+        }, LV_EVENT_VALUE_CHANGED, lbl_refresh_val);
     }
 
-    lv_obj_t* dd_tz = lv_dropdown_create(content);
-    lv_dropdown_set_options(dd_tz, tz_opts);
-    lv_dropdown_set_selected(dd_tz, (uint16_t)clock_tz_idx);
-    lv_obj_set_width(dd_tz, lv_pct(100));
-    lv_obj_set_style_bg_color(dd_tz, COL_CARD, 0);
-    lv_obj_set_style_text_color(dd_tz, COL_TEXT, 0);
-    lv_obj_set_style_text_font(dd_tz, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_border_color(dd_tz, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_pad_top(dd_tz, 6, 0);
-    lv_obj_set_style_pad_bottom(dd_tz, 12, 0);
-    // Make the dropdown list taller so more zones are visible without scrolling
-    lv_dropdown_set_dir(dd_tz, LV_DIR_TOP);  // Open upward (settings at bottom)
-    lv_obj_t* dd_list = lv_dropdown_get_list(dd_tz);
-    if (dd_list) {
-        lv_obj_set_height(dd_list, 260);
-        lv_obj_set_style_bg_color(dd_list, lv_color_hex(0x222222), 0);
-        lv_obj_set_style_text_color(dd_list, COL_TEXT, 0);
-        lv_obj_set_style_text_font(dd_list, &lv_font_montserrat_14, 0);
-    }
-    lv_obj_add_event_cb(dd_tz, [](lv_event_t* e) {
-        lv_obj_t* dd = (lv_obj_t*)lv_event_get_target(e);
-        clock_tz_idx = (int)lv_dropdown_get_selected(dd);
-        wifiPrefs.putInt(NVS_KEY_CLOCK_TZ, clock_tz_idx);
-        // Apply timezone immediately
-        setenv("TZ", CLOCK_ZONES[clock_tz_idx].posix, 1);
-        tzset();
-        Serial.printf("[CLOCK] TZ set to %s (%s)\n",
-                      CLOCK_ZONES[clock_tz_idx].name,
-                      CLOCK_ZONES[clock_tz_idx].posix);
-    }, LV_EVENT_VALUE_CHANGED, NULL);
-
-    // ── Weather widget ───────────────────────────────────────────────────────
-    addSectionLabel(content, "Weather widget:");
-    addDescLabel(content, "Show temperature, humidity, wind, and 6-hour forecast (Open-Meteo, no API key needed)");
-
-    lv_obj_t* sw_weather = addSwitch(content, clock_weather_enabled);
-    lv_obj_add_event_cb(sw_weather, [](lv_event_t* e) {
-        lv_obj_t* sw = (lv_obj_t*)lv_event_get_target(e);
-        clock_weather_enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
-        wifiPrefs.putBool(NVS_KEY_CLOCK_WEATHER_EN, clock_weather_enabled);
-    }, LV_EVENT_VALUE_CHANGED, NULL);
-
-    // ── Weather city ─────────────────────────────────────────────────────────
-    addSectionLabel(content, "Weather location:");
-    addDescLabel(content, "Auto-detect uses your public IP to find your location");
-
-    // Build newline-separated city list for the dropdown
-    // ~65 cities × ~25 chars avg (incl. "Region/City" prefix) = ~1625 bytes; 2048 is generous
-    static char city_opts[2048];
-    city_opts[0] = '\0';
-    for (int i = 0; i < CLOCK_CITY_COUNT; i++) {
-        strncat(city_opts, CLOCK_CITIES[i].label, sizeof(city_opts) - strlen(city_opts) - 2);
-        if (i < CLOCK_CITY_COUNT - 1)
-            strncat(city_opts, "\n", sizeof(city_opts) - strlen(city_opts) - 1);
-    }
-
-    lv_obj_t* dd_city = lv_dropdown_create(content);
-    lv_dropdown_set_options(dd_city, city_opts);
-    lv_dropdown_set_selected(dd_city, (uint16_t)clock_weather_city_idx);
-    lv_obj_set_width(dd_city, lv_pct(100));
-    lv_obj_set_style_bg_color(dd_city, COL_CARD, 0);
-    lv_obj_set_style_text_color(dd_city, COL_TEXT, 0);
-    lv_obj_set_style_text_font(dd_city, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_border_color(dd_city, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_pad_top(dd_city, 6, 0);
-    lv_obj_set_style_pad_bottom(dd_city, 12, 0);
-    lv_dropdown_set_dir(dd_city, LV_DIR_TOP);
+    // ────────────────────────────────────────────────────────────────────────
+    // CARD 3 — Time Zone
+    // ────────────────────────────────────────────────────────────────────────
     {
-        lv_obj_t* list = lv_dropdown_get_list(dd_city);
-        if (list) {
-            lv_obj_set_height(list, 260);
-            lv_obj_set_style_bg_color(list, lv_color_hex(0x222222), 0);
-            lv_obj_set_style_text_color(list, COL_TEXT, 0);
-            lv_obj_set_style_text_font(list, &lv_font_montserrat_14, 0);
+        lv_obj_t* card = addCard(content, "Time Zone");
+
+        addDescLabel(card, "Select your local timezone");
+        static char tz_opts[4096];
+        tz_opts[0] = '\0';
+        for (int i = 0; i < CLOCK_ZONES_COUNT; i++) {
+            strncat(tz_opts, CLOCK_ZONES[i].name, sizeof(tz_opts) - strlen(tz_opts) - 2);
+            if (i < CLOCK_ZONES_COUNT - 1) {
+                strncat(tz_opts, "\n", sizeof(tz_opts) - strlen(tz_opts) - 1);
+            }
         }
+        lv_obj_t* dd_tz = makeDropdown(card, tz_opts, (uint16_t)clock_tz_idx, true);
+        lv_obj_add_event_cb(dd_tz, [](lv_event_t* e) {
+            lv_obj_t* dd = (lv_obj_t*)lv_event_get_target(e);
+            clock_tz_idx = (int)lv_dropdown_get_selected(dd);
+            wifiPrefs.putInt(NVS_KEY_CLOCK_TZ, clock_tz_idx);
+            setenv("TZ", CLOCK_ZONES[clock_tz_idx].posix, 1);
+            tzset();
+            Serial.printf("[CLOCK] TZ set to %s (%s)\n",
+                          CLOCK_ZONES[clock_tz_idx].name,
+                          CLOCK_ZONES[clock_tz_idx].posix);
+        }, LV_EVENT_VALUE_CHANGED, NULL);
     }
-    lv_obj_add_event_cb(dd_city, [](lv_event_t* e) {
-        lv_obj_t* dd = (lv_obj_t*)lv_event_get_target(e);
-        clock_weather_city_idx = (int)lv_dropdown_get_selected(dd);
-        wifiPrefs.putInt(NVS_KEY_CLOCK_WEATHER_CITY, clock_weather_city_idx);
-        clock_wx_valid = false;  // Trigger fresh fetch for new city
-    }, LV_EVENT_VALUE_CHANGED, NULL);
 
-    // ── Temperature unit ─────────────────────────────────────────────────────
-    addSectionLabel(content, "Temperature unit:");
-    addDescLabel(content, "Fahrenheit (°F)    default is Celsius");
+    // ────────────────────────────────────────────────────────────────────────
+    // CARD 4 — Weather  (with method dropdown + reveal panels per #74)
+    // ────────────────────────────────────────────────────────────────────────
+    {
+        lv_obj_t* card = addCard(content, "Weather");
 
-    lv_obj_t* sw_fahr = addSwitch(content, clock_wx_fahrenheit);
-    lv_obj_add_event_cb(sw_fahr, [](lv_event_t* e) {
-        lv_obj_t* sw = (lv_obj_t*)lv_event_get_target(e);
-        clock_wx_fahrenheit = lv_obj_has_state(sw, LV_STATE_CHECKED);
-        wifiPrefs.putBool(NVS_KEY_CLOCK_WEATHER_FAHR, clock_wx_fahrenheit);
-        clock_weather_needs_refetch = true;  // Re-fetch with correct temperature_unit
-    }, LV_EVENT_VALUE_CHANGED, NULL);
+        addSettingLabel(card, "Enable widget");
+        addDescLabel(card, "Temperature, humidity, wind, and 6-hour forecast (Open-Meteo, no API key needed)");
+        lv_obj_t* sw_weather = addSwitch(card, clock_weather_enabled);
+        lv_obj_add_event_cb(sw_weather, [](lv_event_t* e) {
+            lv_obj_t* sw = (lv_obj_t*)lv_event_get_target(e);
+            clock_weather_enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
+            wifiPrefs.putBool(NVS_KEY_CLOCK_WEATHER_EN, clock_weather_enabled);
+        }, LV_EVENT_VALUE_CHANGED, NULL);
+
+        // ── Location method dropdown ─────────────────────────────────────────
+        addSettingLabel(card, "Location method");
+        addDescLabel(card, "Auto-detect uses your public IP. Pick a city or enter your own coordinates.");
+
+        // Derive initial method from saved city_idx
+        int initial_method = LOC_METHOD_AUTO;
+        if (clock_weather_city_idx == CLOCK_LOC_CUSTOM_IDX) {
+            initial_method = LOC_METHOD_CUSTOM;
+        } else if (clock_weather_city_idx >= 1 && clock_weather_city_idx < CLOCK_CITY_COUNT) {
+            initial_method = LOC_METHOD_CITY;
+        }
+
+        lv_obj_t* dd_method = makeDropdown(card,
+            "Auto-detect from IP\n"
+            "Predefined city\n"
+            "Custom coordinates",
+            (uint16_t)initial_method, false);
+
+        // ── City sub-container (label + dropdown), hidden unless method == CITY ──
+        city_sub_container = lv_obj_create(card);
+        lv_obj_set_width(city_sub_container, lv_pct(100));
+        lv_obj_set_height(city_sub_container, LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_opa(city_sub_container, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(city_sub_container, 0, 0);
+        lv_obj_set_style_pad_all(city_sub_container, 0, 0);
+        lv_obj_set_style_pad_row(city_sub_container, 4, 0);
+        lv_obj_set_flex_flow(city_sub_container, LV_FLEX_FLOW_COLUMN);
+        lv_obj_clear_flag(city_sub_container, LV_OBJ_FLAG_SCROLLABLE);
+
+        addSettingLabel(city_sub_container, "City");
+        // Build the city list — predefined entries only (skip CLOCK_CITIES[0] which is Auto).
+        static char city_opts[2048];
+        city_opts[0] = '\0';
+        for (int i = 1; i < CLOCK_CITY_COUNT; i++) {
+            strncat(city_opts, CLOCK_CITIES[i].label, sizeof(city_opts) - strlen(city_opts) - 2);
+            if (i < CLOCK_CITY_COUNT - 1)
+                strncat(city_opts, "\n", sizeof(city_opts) - strlen(city_opts) - 1);
+        }
+        // Map saved idx → dropdown idx (saved 1..N-1 ⇒ dropdown 0..N-2; else 0)
+        uint16_t city_dd_initial = (initial_method == LOC_METHOD_CITY)
+                                   ? (uint16_t)(clock_weather_city_idx - 1)
+                                   : 0;
+        dd_city = makeDropdown(city_sub_container, city_opts, city_dd_initial, true);
+        lv_obj_add_event_cb(dd_city, [](lv_event_t* e) {
+            lv_obj_t* dd = (lv_obj_t*)lv_event_get_target(e);
+            // Predefined city sub-dropdown is 0-indexed over [1..CLOCK_CITY_COUNT-1]
+            clock_weather_city_idx = (int)lv_dropdown_get_selected(dd) + 1;
+            wifiPrefs.putInt(NVS_KEY_CLOCK_WEATHER_CITY, clock_weather_city_idx);
+            clock_wx_valid = false;
+            clock_weather_needs_refetch = true;
+        }, LV_EVENT_VALUE_CHANGED, NULL);
+
+        // ── Custom coords sub-card, hidden unless method == CUSTOM ──────────
+        custom_loc_card = lv_obj_create(card);
+        lv_obj_set_width(custom_loc_card, lv_pct(100));
+        lv_obj_set_height(custom_loc_card, LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_color(custom_loc_card, lv_color_hex(0x121212), 0);
+        lv_obj_set_style_bg_opa(custom_loc_card, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(custom_loc_card, 10, 0);
+        lv_obj_set_style_border_color(custom_loc_card, COL_ACCENT, 0);
+        lv_obj_set_style_border_width(custom_loc_card, 1, 0);
+        lv_obj_set_style_pad_all(custom_loc_card, 12, 0);
+        lv_obj_set_style_pad_row(custom_loc_card, 6, 0);
+        lv_obj_set_style_margin_top(custom_loc_card, 6, 0);
+        lv_obj_set_flex_flow(custom_loc_card, LV_FLEX_FLOW_COLUMN);
+        lv_obj_clear_flag(custom_loc_card, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t* sub_title = lv_label_create(custom_loc_card);
+        lv_label_set_text(sub_title, "Custom coordinates");
+        lv_obj_set_style_text_font(sub_title, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(sub_title, COL_ACCENT, 0);
+
+        addSettingLabel(custom_loc_card, "Latitude (-90 to 90)");
+        // Initialize from atomic float; format with 4 decimal places
+        char lat_init[16] = "";
+        if (clock_custom_lat != 0.0f || clock_custom_lon != 0.0f) {
+            snprintf(lat_init, sizeof(lat_init), "%.4f", (double)clock_custom_lat);
+        }
+        custom_lat_ta = makeTextarea(custom_loc_card,
+            lat_init, "0123456789.-", 12, "e.g. 45.5017");
+        lv_obj_add_event_cb(custom_lat_ta, custom_ta_event_cb, LV_EVENT_FOCUSED,   NULL);
+        lv_obj_add_event_cb(custom_lat_ta, custom_ta_event_cb, LV_EVENT_DEFOCUSED, NULL);
+
+        addSettingLabel(custom_loc_card, "Longitude (-180 to 180)");
+        char lon_init[16] = "";
+        if (clock_custom_lat != 0.0f || clock_custom_lon != 0.0f) {
+            snprintf(lon_init, sizeof(lon_init), "%.4f", (double)clock_custom_lon);
+        }
+        custom_lon_ta = makeTextarea(custom_loc_card,
+            lon_init, "0123456789.-", 12, "e.g. -73.5673");
+        lv_obj_add_event_cb(custom_lon_ta, custom_ta_event_cb, LV_EVENT_FOCUSED,   NULL);
+        lv_obj_add_event_cb(custom_lon_ta, custom_ta_event_cb, LV_EVENT_DEFOCUSED, NULL);
+
+        addDescLabel(custom_loc_card,
+            "Saved automatically when you tap outside the field. Get coordinates from any map app.");
+
+        // ── Method dropdown handler (after city/custom panels exist) ────────
+        lv_obj_add_event_cb(dd_method, [](lv_event_t* e) {
+            lv_obj_t* dd = (lv_obj_t*)lv_event_get_target(e);
+            int method = (int)lv_dropdown_get_selected(dd);
+            if (method == LOC_METHOD_AUTO) {
+                clock_weather_city_idx = 0;
+            } else if (method == LOC_METHOD_CITY) {
+                // If we were on Auto or Custom, default to the first predefined city.
+                if (clock_weather_city_idx == 0 || clock_weather_city_idx == CLOCK_LOC_CUSTOM_IDX) {
+                    clock_weather_city_idx = 1;
+                    if (dd_city) lv_dropdown_set_selected(dd_city, 0);
+                }
+            } else /* LOC_METHOD_CUSTOM */ {
+                clock_weather_city_idx = CLOCK_LOC_CUSTOM_IDX;
+            }
+            wifiPrefs.putInt(NVS_KEY_CLOCK_WEATHER_CITY, clock_weather_city_idx);
+            clock_wx_valid = false;
+            clock_weather_needs_refetch = true;
+            update_location_method_visibility(method);
+        }, LV_EVENT_VALUE_CHANGED, NULL);
+
+        // Apply initial visibility
+        update_location_method_visibility(initial_method);
+
+        // ── Temperature unit ────────────────────────────────────────────────
+        addSettingLabel(card, "Temperature unit");
+        addDescLabel(card, "On = Fahrenheit (°F), Off = Celsius (°C)");
+        lv_obj_t* sw_fahr = addSwitch(card, clock_wx_fahrenheit);
+        lv_obj_add_event_cb(sw_fahr, [](lv_event_t* e) {
+            lv_obj_t* sw = (lv_obj_t*)lv_event_get_target(e);
+            clock_wx_fahrenheit = lv_obj_has_state(sw, LV_STATE_CHECKED);
+            wifiPrefs.putBool(NVS_KEY_CLOCK_WEATHER_FAHR, clock_wx_fahrenheit);
+            clock_weather_needs_refetch = true;
+        }, LV_EVENT_VALUE_CHANGED, NULL);
+    }
+
+    // ─── Floating compact numeric pad (dark-styled, 4×4) ────────────────────
+    // Custom map: digits + minus + decimal + backspace + close. No OK/validate.
+    // Smaller than the default LV_KEYBOARD_MODE_NUMBER (which has +/-, layout
+    // switchers, and a validate button that wasn't wired here).
+    custom_kb = lv_keyboard_create(scr_clock_settings);
+    lv_keyboard_set_map(custom_kb, LV_KEYBOARD_MODE_USER_1, num_kb_map, num_kb_ctrl);
+    lv_keyboard_set_mode(custom_kb, LV_KEYBOARD_MODE_USER_1);
+    lv_obj_set_size(custom_kb, 340, 200);
+    lv_obj_align(custom_kb, LV_ALIGN_BOTTOM_RIGHT, -12, -12);
+    lv_obj_add_flag(custom_kb, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(custom_kb, kb_close_event_cb, LV_EVENT_CANCEL, NULL);
+    lv_obj_add_event_cb(custom_kb, kb_close_event_cb, LV_EVENT_READY,  NULL);
+    style_keyboard_dark(custom_kb);
 }

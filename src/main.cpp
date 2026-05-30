@@ -90,8 +90,17 @@ void setup() {
     if (clock_bg_kw_idx < 0 || clock_bg_kw_idx >= CLOCK_BG_KW_COUNT)   clock_bg_kw_idx = 0;
     clock_weather_enabled  = wifiPrefs.getBool(NVS_KEY_CLOCK_WEATHER_EN,   (bool)CLOCK_DEFAULT_WEATHER_EN);
     clock_weather_city_idx = wifiPrefs.getInt(NVS_KEY_CLOCK_WEATHER_CITY,  CLOCK_DEFAULT_WEATHER_CITY);
-    if (clock_weather_city_idx < 0 || clock_weather_city_idx >= CLOCK_CITY_COUNT) clock_weather_city_idx = 0;
+    // Index range: 0..CLOCK_CITY_COUNT-1 = predefined cities (0 = Auto); CLOCK_CITY_COUNT = Custom (issue #74).
+    if (clock_weather_city_idx < 0 || clock_weather_city_idx > CLOCK_LOC_CUSTOM_IDX) clock_weather_city_idx = 0;
     clock_wx_fahrenheit    = wifiPrefs.getBool(NVS_KEY_CLOCK_WEATHER_FAHR, (bool)CLOCK_DEFAULT_WEATHER_FAHR);
+    // Custom location override (#74) — load as String from NVS (text form, full precision),
+    // then parse into the atomic float globals the bg task reads. 0.0f = unset.
+    {
+        String lat_s = wifiPrefs.getString(NVS_KEY_CLOCK_WX_CUSTOM_LAT, "");
+        String lon_s = wifiPrefs.getString(NVS_KEY_CLOCK_WX_CUSTOM_LON, "");
+        clock_custom_lat = (lat_s.length() > 0) ? lat_s.toFloat() : 0.0f;
+        clock_custom_lon = (lon_s.length() > 0) ? lon_s.toFloat() : 0.0f;
+    }
     Serial.printf("[CLOCK] mode=%d timeout=%dmin tz=%s picsum=%s refresh=%dmin kw=%s 12h=%s weather=%s city=%s\n",
                   clock_mode, clock_timeout_min,
                   CLOCK_ZONES[clock_tz_idx].name,

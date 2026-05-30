@@ -255,8 +255,18 @@ extern int  clock_refresh_min;    // Minutes between background photo refreshes
 extern int  clock_bg_kw_idx;      // Index into CLOCK_BG_KEYWORDS[]
 extern bool clock_12h;            // true = 12h AM/PM format, false = 24h
 extern bool clock_weather_enabled;   // true = show weather widget
-extern int  clock_weather_city_idx;  // Index into CLOCK_CITIES[]
+extern int  clock_weather_city_idx;  // Index into CLOCK_CITIES[], OR == CLOCK_CITY_COUNT for custom location (issue #74)
 extern bool clock_wx_fahrenheit;     // true = display temps in °F
+
+// Custom location override (issue #74) — used when clock_weather_city_idx == CLOCK_LOC_CUSTOM_IDX.
+// Stored as `volatile float` (32-bit aligned = atomic single-word read on RISC-V) so the bg task
+// can read them without a mutex / without going through NVS (NVS reads from a PSRAM-stacked task
+// crash on the cache-disable assert — see ui_clock_screen.cpp fetchClockWeather custom branch).
+// Sentinel value 0.0f = unset (lat/lon = exactly 0.0 is off the coast of Ghana — acceptable).
+extern volatile float clock_custom_lat;
+extern volatile float clock_custom_lon;
+// Sentinel index that means "use custom_lat/lon" instead of CLOCK_CITIES[idx]
+#define CLOCK_LOC_CUSTOM_IDX  CLOCK_CITY_COUNT
 
 // Weather data — written by bg task, read by UI tick (flag guards LVGL calls)
 struct ClockWxHour { int wmo; int temp; int hour; };  // hour 0-23

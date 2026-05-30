@@ -227,6 +227,10 @@
 #define NVS_KEY_CLOCK_WEATHER_EN   "clk_wx_en"
 #define NVS_KEY_CLOCK_WEATHER_CITY "clk_wx_city"
 #define NVS_KEY_CLOCK_WEATHER_FAHR "clk_wx_fahr"
+// Custom location override (issue #74) — used when city_idx == CLOCK_LOC_CUSTOM_IDX
+#define NVS_KEY_CLOCK_WX_CUSTOM_LAT  "clk_wx_clat"
+#define NVS_KEY_CLOCK_WX_CUSTOM_LON  "clk_wx_clon"
+#define NVS_KEY_CLOCK_WX_CUSTOM_NAME "clk_wx_cnam"
 
 // =============================================================================
 // QUEUE / PLAYLIST

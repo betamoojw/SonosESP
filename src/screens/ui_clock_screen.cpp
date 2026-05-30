@@ -352,6 +352,34 @@ static void fetchClockWeather() {
             if (!ip_ok) { Serial.println("[CLKWX] IP location failed"); return; }
             Serial.printf("[CLKWX] IP location: %.2f, %.2f\n", lat, lon);
         }
+    } else if (clock_weather_city_idx == CLOCK_LOC_CUSTOM_IDX) {
+        // Custom user-supplied coordinates (issue #74).
+        // Read from NVS instead of the clock_custom_* String globals: the settings UI
+        // (main thread) writes those globals while we run on clockBgTask, which would
+        // be the same torn-String race as CR-1. NVS/Preferences is thread-safe.
+        String lat_s = wifiPrefs.getString(NVS_KEY_CLOCK_WX_CUSTOM_LAT, "");
+        String lon_s = wifiPrefs.getString(NVS_KEY_CLOCK_WX_CUSTOM_LON, "");
+        if (lat_s.length() == 0 || lon_s.length() == 0) {
+            Serial.println("[CLKWX] Custom location selected but coords are empty — skipping");
+            return;
+        }
+        lat = lat_s.toFloat();
+        lon = lon_s.toFloat();
+        // toFloat returns 0.0 on parse failure; reject that and out-of-range values.
+        if (lat < -90.0f  || lat > 90.0f  ||
+            lon < -180.0f || lon > 180.0f ||
+            (lat == 0.0f && lon == 0.0f)) {
+            Serial.printf("[CLKWX] Custom coords out of range or unparsable: %.4f, %.4f\n", lat, lon);
+            return;
+        }
+        String name_s = wifiPrefs.getString(NVS_KEY_CLOCK_WX_CUSTOM_NAME, "");
+        if (name_s.length() > 0) {
+            strlcpy(clock_wx_city_name, name_s.c_str(), sizeof(clock_wx_city_name));
+        } else {
+            snprintf(clock_wx_city_name, sizeof(clock_wx_city_name), "%.2f, %.2f", lat, lon);
+        }
+        Serial.printf("[CLKWX] Using custom location: %.4f, %.4f (%s)\n",
+                      lat, lon, clock_wx_city_name);
     } else {
         lat = CLOCK_CITIES[clock_weather_city_idx].lat;
         lon = CLOCK_CITIES[clock_weather_city_idx].lon;

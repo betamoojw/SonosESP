@@ -222,6 +222,10 @@ bool clock_12h            = (bool)CLOCK_DEFAULT_12H;
 bool clock_weather_enabled  = (bool)CLOCK_DEFAULT_WEATHER_EN;
 int  clock_weather_city_idx = CLOCK_DEFAULT_WEATHER_CITY;
 bool clock_wx_fahrenheit    = (bool)CLOCK_DEFAULT_WEATHER_FAHR;
+// Custom location override (issue #74)
+String clock_custom_lat  = "";
+String clock_custom_lon  = "";
+String clock_custom_name = "";
 int           clock_wx_temp     = 0;
 int           clock_wx_humidity = 0;
 int           clock_wx_wind     = 0;

@@ -90,8 +90,13 @@ void setup() {
     if (clock_bg_kw_idx < 0 || clock_bg_kw_idx >= CLOCK_BG_KW_COUNT)   clock_bg_kw_idx = 0;
     clock_weather_enabled  = wifiPrefs.getBool(NVS_KEY_CLOCK_WEATHER_EN,   (bool)CLOCK_DEFAULT_WEATHER_EN);
     clock_weather_city_idx = wifiPrefs.getInt(NVS_KEY_CLOCK_WEATHER_CITY,  CLOCK_DEFAULT_WEATHER_CITY);
-    if (clock_weather_city_idx < 0 || clock_weather_city_idx >= CLOCK_CITY_COUNT) clock_weather_city_idx = 0;
+    // Index range: 0..CLOCK_CITY_COUNT-1 = predefined cities (0 = Auto); CLOCK_CITY_COUNT = Custom (issue #74).
+    if (clock_weather_city_idx < 0 || clock_weather_city_idx > CLOCK_LOC_CUSTOM_IDX) clock_weather_city_idx = 0;
     clock_wx_fahrenheit    = wifiPrefs.getBool(NVS_KEY_CLOCK_WEATHER_FAHR, (bool)CLOCK_DEFAULT_WEATHER_FAHR);
+    // Custom location override — empty strings mean "not set" (#74)
+    clock_custom_lat  = wifiPrefs.getString(NVS_KEY_CLOCK_WX_CUSTOM_LAT,  "");
+    clock_custom_lon  = wifiPrefs.getString(NVS_KEY_CLOCK_WX_CUSTOM_LON,  "");
+    clock_custom_name = wifiPrefs.getString(NVS_KEY_CLOCK_WX_CUSTOM_NAME, "");
     Serial.printf("[CLOCK] mode=%d timeout=%dmin tz=%s picsum=%s refresh=%dmin kw=%s 12h=%s weather=%s city=%s\n",
                   clock_mode, clock_timeout_min,
                   CLOCK_ZONES[clock_tz_idx].name,

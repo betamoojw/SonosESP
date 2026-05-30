@@ -255,8 +255,16 @@ extern int  clock_refresh_min;    // Minutes between background photo refreshes
 extern int  clock_bg_kw_idx;      // Index into CLOCK_BG_KEYWORDS[]
 extern bool clock_12h;            // true = 12h AM/PM format, false = 24h
 extern bool clock_weather_enabled;   // true = show weather widget
-extern int  clock_weather_city_idx;  // Index into CLOCK_CITIES[]
+extern int  clock_weather_city_idx;  // Index into CLOCK_CITIES[], OR == CLOCK_CITY_COUNT for custom location (issue #74)
 extern bool clock_wx_fahrenheit;     // true = display temps in °F
+
+// Custom location override (issue #74) — used when clock_weather_city_idx == CLOCK_LOC_CUSTOM_IDX.
+// Stored as Strings so "unset" is distinguishable from "0.0,0.0" (off the coast of Ghana).
+extern String clock_custom_lat;
+extern String clock_custom_lon;
+extern String clock_custom_name;
+// Sentinel index that means "use custom_lat/lon/name" instead of CLOCK_CITIES[idx]
+#define CLOCK_LOC_CUSTOM_IDX  CLOCK_CITY_COUNT
 
 // Weather data — written by bg task, read by UI tick (flag guards LVGL calls)
 struct ClockWxHour { int wmo; int temp; int hour; };  // hour 0-23
